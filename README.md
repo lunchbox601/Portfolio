@@ -3,21 +3,21 @@ Example of Data Science Work for Justin Waterfield
 
 Please visit my LinkedIn: https://www.linkedin.com/in/waterfieldj/
 
-#Previous Role
+# - Previous Role
 Led the integration and improvement of data-related costs to support business goals.
 Managed projects efficiently, meeting deadlines and budgets using agile/waterfall methodologies.
 Understood and fulfilled customer needs, ensuring satisfaction with data services.
 Oversaw multiple support departments and collaborated effectively with cross-functional teams.
 Drove continuous improvement in data acquisition, onboarding, management, and DataOps processes.
 
-#About Me:
+# - About Me
 Capable of communicating complex data concepts to non-technical audiences.
 Possessed a strong sense of ownership and passion for data.
 Self-motivated, adaptable to a fast-paced environment, capable of course correction when necessary.
 Methodical problem-solver, open to learning and promoting employee development.
 Comfortable handling various tasks throughout the workday.
 
-#Data Skills
+# - Data Skills
 Extensive experience in collaborative environments.
 Strong analytical and problem-solving skills.
 Proficiency in programming with large data sets, SQL, Python, and Shell
