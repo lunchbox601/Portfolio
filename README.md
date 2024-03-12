@@ -12,7 +12,7 @@ Drove continuous improvement in data acquisition, onboarding, management, and Da
 
 # - About Me
 Capable of communicating complex data concepts to non-technical audiences.
-Possessed a strong sense of ownership and passion for data.
+Possesses a strong sense of ownership and passion for data.
 Self-motivated, adaptable to a fast-paced environment, capable of course correction when necessary.
 Methodical problem-solver, open to learning and promoting employee development.
 Comfortable handling various tasks throughout the workday.
