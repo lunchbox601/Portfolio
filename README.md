@@ -5,7 +5,7 @@ Please visit my LinkedIn: https://www.linkedin.com/in/waterfieldj/
 
 # - Duke University Historical Water Usage
 I was given a .csv of large dataset (100k rows) of historical water usage for 7 Duke University facility buildings. With the variables being date/time + kBTU. I constructed a stakeholder presentation to demonstrate my data analysis skills.
-Please view [here]([(https://github.com/lunchbox601/Portfolio/blob/75d1ce8622a45e04de0a57a9391019b45fdaa650/Presentations/Duke%20University%20-%20Water%20Usage%20-%20Data%20Analysis.pdf))
+Please view here. [https://github.com/lunchbox601/Portfolio/blob/75d1ce8622a45e04de0a57a9391019b45fdaa650/Presentations/Duke%20University%20-%20Water%20Usage%20-%20Data%20Analysis.pdf](url)
 
 # -Metadata Standards
 BRAIN Intiative: https://braininitiative.nih.gov/
