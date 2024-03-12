@@ -3,6 +3,27 @@ Example of Data Science Work for Justin Waterfield
 
 Please visit my LinkedIn: https://www.linkedin.com/in/waterfieldj/
 
+#Previous Role
+Led the integration and improvement of data-related costs to support business goals.
+Managed projects efficiently, meeting deadlines and budgets using agile/waterfall methodologies.
+Understood and fulfilled customer needs, ensuring satisfaction with data services.
+Oversaw multiple support departments and collaborated effectively with cross-functional teams.
+Drove continuous improvement in data acquisition, onboarding, management, and DataOps processes.
+
+#About Me:
+Capable of communicating complex data concepts to non-technical audiences.
+Possessed a strong sense of ownership and passion for data.
+Self-motivated, adaptable to a fast-paced environment, capable of course correction when necessary.
+Methodical problem-solver, open to learning and promoting employee development.
+Comfortable handling various tasks throughout the workday.
+
+#Data Skills
+Extensive experience in collaborative environments.
+Strong analytical and problem-solving skills.
+Proficiency in programming with large data sets, SQL, Python, and Shell
+Comfortable with Buisness Intelligence tools
+Proficient with Jira/Confluence
+
 # - Duke University Historical Water Usage
 I was given a .csv of large dataset (100k rows) of historical water usage for 7 Duke University facility buildings. With the variables being date/time + kBTU. I constructed a stakeholder presentation to demonstrate my data analysis skills.
 Please view here. https://github.com/lunchbox601/Portfolio/blob/75d1ce8622a45e04de0a57a9391019b45fdaa650/Presentations/Duke%20University%20-%20Water%20Usage%20-%20Data%20Analysis.pdf
