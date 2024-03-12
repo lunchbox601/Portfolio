@@ -3,9 +3,9 @@ Example of Data Science Work for Justin Waterfield
 
 Please visit my LinkedIn: https://www.linkedin.com/in/waterfieldj/
 
-Personal Website: https://justinwaterfield.com/
-
-Science Blog: https://justinwaterfield.substack.com/
+# - Duke University Historical Water Usage
+I was given a .csv of large dataset (100k rows) of historical water usage for 7 Duke University facility buildings. With the variables being date/time + kBTU. I constructed a stakeholder presentation to demonstrate my data analysis skills.
+Please view here: https://github.com/lunchbox601/Portfolio/blob/dfcb6b5c5300b9cc5966bb70fd2e5361e029e6a0/Duke%20University%20-%20Water%20Usage%20-%20Data%20Analysis.pdf
 
 
 # -Metadata Standards
