@@ -1,0 +1,95 @@
+🔄 Change Management & Issue Log SOP
+A reference guide for tracking, reviewing, and approving all mapping, transformation, and data quality changes in the healthcare claims pipeline. Designed for auditability, accountability, and continuous improvement.
+
+1. Purpose
+Ensure all changes and known issues are logged, tracked, and resolved in a transparent, compliant manner.
+Facilitate peer review, sign-off, and audit readiness for all critical data pipeline changes.
+2. When to Log a Change or Issue
+Field mapping or transformation logic is added, updated, or deprecated
+Data quality gap (e.g., missing data, unexpected nulls, failed validation gate)
+Business rules or requirements change
+Production issue or bug is discovered
+Field or table is added/removed/renamed
+3. Change Log Template
+Date	Field/Table	Old Logic / Mapping	New Logic / Mapping	Reason / Root Cause	Owner	Status	Approved By	Comments
+2024-05-01	claim_paid_amount	raw value	raw * 100, cast to STRING	Standardize cents storage	J. Doe	Complete	QA Lead	See validation query
+2024-05-12	capitation_indicator	N/A	Y→TRUE, N→FALSE	New reporting requirement	S. Lee	Pending		
+...	...	...	...	...	...	...	...	...
+4. Issue Log Template
+Date	Field/Table	Issue Description	Severity	Status	Owner	Resolution / Next Steps	Resolution Date
+2024-05-10	provider_id	2% blanks post-join	Medium	Open	T. Smith	Investigate join keys	
+2024-05-15	claim_date	Non-YYYYMMDD formats	High	Closed	J. Doe	Added format guard; re-run	2024-05-16
+...	...	...	...	...	...	...	...
+5. Change & Issue Management Workflow
+A. End-to-End Flow
+Log the Change/Issue
+Use the templates above; record in the shared log (spreadsheet, Confluence, or database).
+Initial Review & Assignment
+Assign a responsible analyst/owner.
+Triage for impact and urgency.
+Analysis & Documentation (Analyst’s Work)
+Investigate the issue/root cause using queries or code review.
+Document your findings clearly in the log, including:
+Queries or scripts used.
+Evidence of the issue (query output, screenshots, summary metrics).
+Hypothesis and reasoning.
+If applicable, attach a “before/after” validation result.
+If a fix or change is required, propose the solution (including updated SQL/mapping/logic).
+Record any blockers, open questions, or assumptions.
+Peer Review & Approval
+Submit your documentation and proposed fix for peer or QA lead review.
+Address peer feedback and re-document as needed.
+Implement & Test
+Apply the fix in code, mapping, or ETL.
+Attach or cite validation/QC queries to confirm resolution.
+Resolution & Sign-Off
+Mark as Complete/Closed in the log.
+Update documentation and notify stakeholders if required.
+Archive supporting evidence for audit trail.
+Audit Trail
+Retain all logs, documentation, queries, and outputs for compliance/audit.
+B. Analyst Documentation Instructions
+When assigned an issue or change, you must:
+
+Summarize the Issue
+
+Restate the problem or change in your own words.
+Reference the log entry (date, field/table, description).
+Investigate & Gather Evidence
+
+Write and run relevant SQL or code to reproduce/understand the issue.
+Save query text and output (paste results, or attach screenshots if allowed).
+Quantify the impact (row counts affected, % blank, # of violations, etc.).
+Propose Solution (if applicable)
+
+Write the updated SQL, mapping, or business rule.
+Provide a summary of how the fix addresses the issue.
+Include proposed validation/QC queries.
+Document Work in the Log
+
+Paste or link your analysis, queries, and findings in the Comments or Resolution/Next Steps column.
+Clearly state the result: fixed, not reproducible, needs escalation, etc.
+Mark for Review
+
+Indicate in the log when your work is “Ready for QA Review.”
+Assign or notify the designated reviewer.
+Archive Supporting Materials
+
+Store all scripts, outputs, and screenshots in a shared location (e.g., repo, Confluence, or ticket attachments).
+6. Communication & Escalation
+Escalate Critical/High issues to data governance and project leadership immediately.
+Use Jira (or equivalent) for issues that require cross-team coordination.
+Provide weekly updates on open and recently resolved changes/issues.
+7. Best Practices
+Always link changes/issues to validation or QC queries whenever possible.
+Reference related documentation (mapping tables, field dictionaries, SOPs).
+Use consistent field/table naming and clear, specific descriptions.
+Review and archive closed items quarterly to maintain log hygiene.
+Analysts: Document every meaningful step, even if the resolution is “no action needed.”
+8. References
+Validation & QC Guide
+Audit & Traceability Guide
+Mapping Reference & Transformation Library
+For questions or to request access to the change/issue log, contact the data governance lead or open a support ticket.
+
+
