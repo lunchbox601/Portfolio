@@ -1,0 +1,70 @@
+🗺️ Mapping Reference & Transformation Library
+A comprehensive, version-controlled index of all field mappings and transformation logic from raw source data through GDF (Golden Data Foundation) and into CDF (Client Data Feed). This document ensures transparency, consistency, and auditability.
+
+1. Purpose
+Document every field’s journey: raw → GDF → CDF.
+Centralize transformation logic and mapping decisions.
+Facilitate onboarding, QA, audit, and change management.
+2. Mapping Table Template
+CDF Field	GDF Field	Raw Field(s)	Transformation Logic	Notes / Business Rule
+claim_key	CH_CLAIM_KEY	claim_header.clcl_id	N/A	PK, always populated
+client_original_claim_id	CH_CLIENT_CLAIM_ID	client_claim_id	N/A	
+capitation_indicator	CH_CAPITATION_IND	capitation_ind	Y→TRUE, N→FALSE	Boolean, required for reporting
+claim_paid_amount	CH_CLAIM_PAID_AMOUNT	claim_paid_amount	Multiply by 100, cast to STRING	Stored as cents
+...	...	...	...	...
+Add more rows and fields as needed. Version-control this table.
+
+3. Common Transformation Patterns
+Type	Pattern / Example
+Boolean	CASE WHEN src='Y' THEN TRUE WHEN src='N' THEN FALSE ELSE NULL END
+Dates	FROM_UNIXTIME(UNIX_TIMESTAMP(src_dt, 'yyyy-MM-dd'), 'yyyyMMdd')
+Amounts	CAST(CAST(src_amt AS DECIMAL(18,2)) * 100 AS BIGINT) AS STRING (for cents storage)
+Multi-valued	Map to arrays or indexed fields: DIAG_CODE_01–25
+Null Policy	Always use '' (empty string) for blanks, never a space; use NULL only when business-justified
+4. Handling Multi-Valued & Array Fields
+For diagnoses, procedures, etc., map as:
+CH_DIAGNOSIS_CODE_01, CH_DIAGNOSIS_CODE_02, ..., CH_DIAGNOSIS_CODE_25
+Document maximum expected cardinality and overflow policy.
+5. Field Mapping Documentation Standard
+For each mapped field, document:
+
+All raw sources (with table and column)
+Transformation logic (SQL or description)
+Business rule or validator requirement
+Any conditional or override logic
+Notes on partial population, suppression, or PHI handling
+6. Gaps, Issues, & Customizations
+Log all fields with:
+No available raw source
+Partial or conditional mapping
+Custom business logic (explain and cite requirement)
+Use a separate "Gap Log" or add an Issues column to the mapping table.
+7. Change Management
+All mapping changes must be version-controlled and logged with:
+Date, field, old mapping, new mapping, reason, and approver.
+Reference the Change Management & Issue Log SOP for process details.
+8. Reference Examples
+A. Boolean Mapping
+sql
+CASE WHEN capitation_ind = 'Y' THEN TRUE
+     WHEN capitation_ind = 'N' THEN FALSE
+     ELSE NULL END AS CH_CAPITATION_IND
+
+Copy
+B. Amount to Cents
+sql
+CAST(CAST(claim_paid_amount AS DECIMAL(18,2)) * 100 AS BIGINT) AS CH_CLAIM_PAID_AMOUNT
+
+Copy
+C. Date Formatting
+sql
+FROM_UNIXTIME(UNIX_TIMESTAMP(service_date, 'yyyy-MM-dd'), 'yyyyMMdd') AS CH_SERVICE_DATE
+
+Copy
+9. Additional Resources
+Validation & QC Guide
+Audit & Traceability Guide
+EDA Playbook
+For mapping questions or to propose changes, contact the mapping/data governance lead or open an issue in the repository.
+
+
