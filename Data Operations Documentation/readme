@@ -1,0 +1,51 @@
+📚 Data Operations & Healthcare Claims Documentation Home
+Welcome to the central documentation hub for data engineering, validation, and analytics processes in our healthcare claims pipeline. This repository is designed for both new and experienced team members, as well as compliance, QA, and audit partners.
+
+🚦 Quick Start
+New to the team?
+Start with the Onboarding & Quick-Start Guide
+Looking for mapping or transformation details?
+See the Mapping Reference & Transformation Library
+Troubleshooting joins or row count issues?
+Go to the Joins Best Practices & Pitfalls
+Need to validate or audit data?
+Visit the Data Validation & Quality Control and Data Auditing & Traceability sections.
+
+🗂️ Documentation Index
+Topic	Description	Link
+Onboarding & Quick-Start Guide	Environment setup, key contacts, and process overview	onboarding-quickstart.md
+Joins Best Practices & Pitfalls	Guidance and SQL for safe joins, deduplication, and QA	joins-best-practices.md
+Data Validation & Quality Control	Validation gates, QC patterns, and acceptance criteria	validation-qc.md
+Data Auditing & Traceability	How to trace data lineage and prepare for audits	audit-traceability.md
+Exploratory Data Analysis (EDA)	Profiling, anomaly detection, and reporting standards	eda-playbook.md
+Mapping Reference & Transformation	Raw→GDF→CDF mapping tables, logic, and examples	mapping-reference.md
+Medical Claims Lifecycle Primer	Contextual overview of claims processing and data flows	claims-lifecycle.md
+Change Management & Issue Log SOP	Process for logging, tracking, and resolving changes	change-management.md
+
+🛠️ Key SOPs & Templates
+Data Onboarding SOP
+GDF→CDF Checklist
+Auditing & Compliance Checklist
+JIRA/Issue Escalation Template
+
+📈 References & Industry Context
+CMS (Centers for Medicare & Medicaid Services)
+AMA (American Medical Association)
+HFMA (Healthcare Financial Management Association)
+     
+🤝 Getting Help
+Slack: #data-ops-support
+Email: data-team@[yourcompany].com
+Weekly Office Hours: Fridays 2pm ET
+     
+📝 Contribution Guidelines
+See CONTRIBUTING.md for how to request updates or add new documentation.
+All content must be non-PHI, vendor-agnostic, and compliance-reviewed before merging.
+     
+🕵️‍♂️ Audit & Compliance Statement
+All documentation in this repository is designed to be audit-ready and safe for external review. If you have questions about compliance, reach out to your manager or the data governance team.
+
+For any missing documentation or suggestions, please open an issue or contact the documentation owner.
+
+
+
