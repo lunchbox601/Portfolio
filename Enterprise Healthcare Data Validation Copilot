@@ -1,0 +1,1172 @@
+Enterprise Healthcare Data Validation Copilot
+v2.2 – Vendor-Agnostic, PHI-Safe, Production-Ready
+Last updated: 2026-02-12
+Audience: Data analysts, QA engineers, offshore development teams
+Design: Non-PHI proofs • stable joins • measurable impact • GDF Change Management aligned
+
+0) Pre-Flight Checklist (Run Every Session)
+0.0 Dataset Sanity Check
+Before any validation, confirm you're looking at the right data:
+
+sql
+-- 1. Check partition presence
+SELECT ingestion_date, COUNT(*) AS row_count
+FROM <table>
+GROUP BY ingestion_date
+ORDER BY ingestion_date DESC;
+
+-- 2. Check row counts match expectations
+SELECT 
+  'Raw' AS layer, COUNT(*) AS rows FROM <raw_table>
+UNION ALL
+SELECT 'GDF' AS layer, COUNT(*) AS rows FROM <gdf_table>
+UNION ALL
+SELECT 'CDF' AS layer, COUNT(*) AS rows FROM <cdf_table>;
+
+-- 3. Check date range of data
+SELECT 
+  MIN(service_from_date) AS earliest_service,
+  MAX(service_from_date) AS latest_service,
+  COUNT(DISTINCT service_from_date) AS distinct_service_dates
+FROM <table>;
+
+Copy
+Rule: If row counts or date ranges don't match expectations, STOP and clarify scope before validating fields.
+
+0.1 Locator Gate (Prevent Wrong Dataset/Partition Issues)
+When Spotcheck/Decipher/Ops reports a blank field, prove the record exists in the dataset you're validating:
+
+sql
+-- Example IDs existence check (any layer)
+SELECT 
+  COUNT(*) AS hit_cnt,
+  COUNT(DISTINCT claim_key) AS distinct_keys
+FROM <table>
+WHERE claim_key IN ('claim_123', 'claim_456', 'claim_789');
+
+Copy
+Rule: If hit_cnt = 0, the record is not in this dataset/partition. Verify environment and partition before assuming mapping failure.
+
+1) Why This Exists (What We Learned)
+We repeatedly encounter:
+
+Validation failures that are actually wrong-dataset/partition mismatches
+Format-only QC that reports "green" while fields are 100% blank
+Spotcheck disagreements caused by grain or layer confusion
+Downstream teams blaming upstream layers for issues introduced in their own transformations
+Semantic drift in field mappings over time (e.g., "patient_ssn" sometimes populated, sometimes placeholder)
+Join fan-out from un-deduped reference tables causing row explosions
+CCV sign-off gaps causing rework after development begins
+This guide captures:
+
+Repeatable validation cadence (Raw → GDF → CDF)
+Non-PHI proof patterns (counts, distributions, format checks only)
+Row-safe join discipline
+GDF Change Management alignment (CCV sign-off gates)
+Semantic drift detection and gates
+Production readiness documentation
+2) Environment & Tables (Authoritative)
+2.1 Where We Run
+Cluster: Hive/Hue on [NILE / Tufts / UHC_CSP cluster]
+Schema: dev_niledataingestion_restricted
+SQL: Hive-compatible (avoid Spark-only features)
+Formatting: Always ensure whitespace/newline before FROM/JOIN in Hue
+2.2 Table Discovery
+sql
+-- Find all tables matching a pattern
+SHOW TABLES IN dev_niledataingestion_restricted LIKE 'uhc_csp_%member%';
+
+-- Describe a table (columns + types)
+DESCRIBE dev_niledataingestion_restricted.uhc_csp_gdf_member_20241204_1;
+
+-- Check partitions present
+SELECT ingestion_date, COUNT(*) AS row_count
+FROM <table>
+GROUP BY ingestion_date
+ORDER BY ingestion_date DESC;
+
+Copy
+3) Golden Rules (Validated, Hard Requirements)
+3.1 Dedup Before Join (Always)
+sql
+-- Claims dedup pattern
+WITH claims_dedup AS (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY TRIM(claimnumber), TRIM(claimtransactionno)
+      ORDER BY fileloaddate DESC, rowid DESC
+    ) rn
+  FROM raw_claims
+)
+SELECT * FROM claims_dedup WHERE rn = 1;
+
+-- Member dedup pattern
+WITH member_dedup AS (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY mem_id, depnum
+      ORDER BY end_datec DESC, eff_datec DESC, fileloaddate DESC, rowid DESC
+    ) rn
+  FROM raw_member
+)
+SELECT * FROM member_dedup WHERE rn = 1;
+
+-- Provider dedup pattern
+WITH provider_dedup AS (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY providerid
+      ORDER BY fileloaddate DESC, rowid DESC
+    ) rn
+  FROM raw_provider
+)
+SELECT * FROM provider_dedup WHERE rn = 1;
+
+Copy
+3.2 Row-Safety (Row Count Must Not Change)
+Every LEFT JOIN must be row-invariant unless explicitly creating multi-row outputs.
+
+Enforce rn = 1 in the ON clause (not WHERE)
+Avoid ON 1=1 joins unless intentional CROSS JOIN with a count CTE
+Always count before/after to detect fan-out
+sql
+-- Row-safety validation
+WITH before_join AS (
+  SELECT COUNT(*) AS cnt FROM claims
+),
+after_join AS (
+  SELECT COUNT(*) AS cnt FROM claims c
+  LEFT JOIN member m ON c.mem_id = m.mem_id AND m.rn = 1
+)
+SELECT 
+  b.cnt AS before,
+  a.cnt AS after,
+  CASE WHEN b.cnt = a.cnt THEN 'SAFE' ELSE 'FAN-OUT' END AS status
+FROM before_join b, after_join a;
+
+Copy
+3.3 Normalize Keys on BOTH Sides
+sql
+-- Provider ID normalization
+REGEXP_REPLACE(TRIM(id), '^0+', '')
+
+-- Member ID normalization (9-digit zero-padded)
+LPAD(REGEXP_REPLACE(TRIM(id),'[^0-9]',''),9,'0')
+
+-- Dependent number (2-digit zero-padded)
+LPAD(REGEXP_REPLACE(TRIM(dep),'[^0-9]',''),2,'0')
+
+-- NPI (10 digits, no hyphens)
+REGEXP_REPLACE(TRIM(npi), '[^0-9]', '')
+
+-- TIN (9 digits, no hyphens)
+REGEXP_REPLACE(TRIM(tin), '[^0-9]', '')
+
+Copy
+3.4 Dates (Sentinel + Format Policy)
+Healthcare sources frequently use sentinel values (00000000, 1753-01-01, 99991231) as "unknown/ongoing/invalid."
+
+For optional dates: typically 00000000 → '' (blank)
+For validator-required dates: you may need sentinel 99991231
+Always document this as a validator-compatibility decision, not clinical truth
+3.5 Deterministic Ranking (Never ORDER BY NULL)
+Any ROW_NUMBER() must order by real columns:
+
+sql
+-- GOOD: Deterministic
+ROW_NUMBER() OVER (
+  PARTITION BY key
+  ORDER BY fileloaddate DESC, rowid DESC
+)
+
+-- BAD: Non-deterministic (avoid)
+ROW_NUMBER() OVER (
+  PARTITION BY key
+  ORDER BY NULL
+)
+
+Copy
+3.6 Semantic Drift Gates (NEW: Prevent Mapping Creep)
+Over time, field mappings can drift (e.g., "patient_ssn" sometimes real, sometimes placeholder). Detect this:
+
+sql
+-- Semantic drift detection: SSN real vs placeholder ratio over time
+SELECT 
+  SUBSTR(ingestion_date, 1, 7) AS month,
+  COUNT(*) AS total_rows,
+  SUM(CASE WHEN patient_ssn = '000000000' THEN 1 ELSE 0 END) AS placeholder_cnt,
+  SUM(CASE WHEN patient_ssn <> '000000000' AND TRIM(patient_ssn) <> '' THEN 1 ELSE 0 END) AS real_cnt,
+  ROUND(100.0 * SUM(CASE WHEN patient_ssn <> '000000000' AND TRIM(patient_ssn) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS real_pct
+FROM cdf_claims
+GROUP BY SUBSTR(ingestion_date, 1, 7)
+ORDER BY month DESC;
+
+Copy
+Rule: If real_pct drops suddenly (e.g., 95% → 5%), a mapping change has occurred. Document the change in the Change Log.
+
+3.7 LPAD Join Hygiene (NEW: Prevent Key Mismatch)
+When joining on zero-padded keys, ensure BOTH sides use identical padding:
+
+sql
+-- GOOD: Both sides padded identically
+SELECT c.claim_key, m.member_name
+FROM claims c
+LEFT JOIN (
+  SELECT 
+    LPAD(REGEXP_REPLACE(TRIM(mem_id),'[^0-9]',''),9,'0') AS mem_id_norm,
+    member_name,
+    ROW_NUMBER() OVER (PARTITION BY LPAD(REGEXP_REPLACE(TRIM(mem_id),'[^0-9]',''),9,'0') ORDER BY fileloaddate DESC) rn
+  FROM member
+) m ON c.mem_id_norm = m.mem_id_norm AND m.rn = 1;
+
+-- BAD: One side padded, other not (0 matches)
+SELECT c.claim_key, m.member_name
+FROM claims c
+LEFT JOIN member m ON c.mem_id = m.mem_id;  -- mem_id is "000123456" vs "123456"
+
+Copy
+4) Standard Validation Workflow (7-Step Loop)
+Step 0 — Capture Context
+GDF table name + load date/partition
+Validation rule IDs failing + counts/%
+Identify if failures are 100% (unmapped) or partial (join/coverage)
+NEW: Confirm CCV sign-off status in Change Log
+Step 0b — Universe Selection (If Multi-Universe Source)
+Before debugging or "data loss" claims:
+
+Is the dataset MAIN or PUBLIC or SENIOR?
+Are we mistakenly using PUBLIC member/group tables to enrich MAIN claims?
+Run universe overlap gates (see Section 3.7 in Tufts playbook if applicable)
+Step 1 — Triage: Classify Failures by Pattern
+Pattern	Signature	Root Cause
+100% missing / invalid	All rows blank or all fail regex	Unmapped field, wrong source column, wrong value-set constant
+High duplicates / PK violations	COUNT(DISTINCT key) << COUNT(*)	Wrong primary key, join fan-out, un-deduped reference
+Coverage-related	Partial nulls/blanks (e.g., 15%)	Join key mismatch, missing dependent, un-deduped lookup
+Data loss	Raw row count >> GDF row count	Filters, accidental INNER JOIN, collapsed keys in dedup
+CDF structural/grain	"Only 1 row per key expected"	Header duplication, array repetition, grain mismatch
+Example IDs return 0 rows	Locator gate = 0	Wrong partition/table, wrong identifier field, wrong environment
+Semantic drift	Placeholder ratio changes month-over-month	Mapping changed; document in Change Log
+Step 2 — Raw Availability Proof (Non-PHI)
+Confirm the raw column exists and measure population:
+
+sql
+-- Raw column discovery + population
+DESCRIBE <raw_table>;
+
+SELECT 
+  COUNT(*) AS row_cnt,
+  SUM(CASE WHEN col IS NULL THEN 1 ELSE 0 END) AS null_cnt,
+  SUM(CASE WHEN TRIM(CAST(col AS STRING)) = '' THEN 1 ELSE 0 END) AS blank_cnt,
+  SUM(CASE WHEN col IS NOT NULL AND TRIM(CAST(col AS STRING)) <> '' THEN 1 ELSE 0 END) AS populated_cnt,
+  ROUND(100.0 * SUM(CASE WHEN col IS NOT NULL AND TRIM(CAST(col AS STRING)) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_populated
+FROM <raw_table>;
+
+Copy
+Step 3 — GDF Population Proof (Non-PHI)
+Measure blanks/nulls/invalid formats in GDF:
+
+sql
+-- GDF population + format paired gate (MANDATORY)
+SELECT
+  COUNT(*) AS row_cnt,
+  SUM(CASE WHEN col IS NULL THEN 1 ELSE 0 END) AS null_cnt,
+  SUM(CASE WHEN TRIM(CAST(col AS STRING)) = '' THEN 1 ELSE 0 END) AS blank_cnt,
+  SUM(CASE WHEN TRIM(CAST(col AS STRING)) <> ''
+            AND NOT (TRIM(CAST(col AS STRING)) RLIKE '^[0-9]{4}$') THEN 1 ELSE 0 END) AS invalid_format_cnt,
+  SUM(CASE WHEN TRIM(CAST(col AS STRING)) <> ''
+            AND TRIM(CAST(col AS STRING)) RLIKE '^[0-9]{4}$' THEN 1 ELSE 0 END) AS valid_format_cnt
+FROM <gdf_table>;
+
+Copy
+Rule: Population ≠ validity. Every critical field needs both a population gate AND a format gate.
+
+Step 4 — Simulation Proof (Build SIM View)
+Create a SIM view (or CTE) that computes the mapped field from raw using the proposed logic:
+
+sql
+-- SIM view: raw → proposed mapping
+WITH raw_dedup AS (
+  SELECT *,
+    ROW_NUMBER() OVER (PARTITION BY key ORDER BY fileloaddate DESC) rn
+  FROM raw_table
+  WHERE rn = 1
+),
+sim AS (
+  SELECT 
+    claim_key,
+    -- Proposed mapping (exact SQL)
+    CASE 
+      WHEN TRIM(raw_drg_code) RLIKE '^[0-9]{4}$' THEN TRIM(raw_drg_code)
+      ELSE ''
+    END AS sim_drg_code
+  FROM raw_dedup
+)
+SELECT 
+  COUNT(*) AS total,
+  SUM(CASE WHEN sim_drg_code = '' THEN 1 ELSE 0 END) AS blank_cnt,
+  SUM(CASE WHEN sim_drg_code <> '' THEN 1 ELSE 0 END) AS populated_cnt
+FROM sim;
+
+Copy
+Why SIM works: It validates transformations without touching production ETL, isolates mapping bugs from join bugs, and produces non-PHI metrics.
+
+Step 5 — Partial-Coverage Reporting (NEW: Grain + %)
+When a field is not 100% populated, report coverage by grain and document expectations:
+
+sql
+-- Partial coverage by claim type
+SELECT 
+  claim_type,
+  COUNT(*) AS total_claims,
+  SUM(CASE WHEN field IS NOT NULL AND TRIM(field) <> '' THEN 1 ELSE 0 END) AS populated_cnt,
+  ROUND(100.0 * SUM(CASE WHEN field IS NOT NULL AND TRIM(field) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_populated,
+  'EXPECTED' AS status  -- or 'INVESTIGATE'
+FROM gdf_claims
+GROUP BY claim_type
+ORDER BY total_claims DESC;
+
+Copy
+Rule: Document why coverage is partial (e.g., "Discharge status only for Inpatient = 100% expected; Professional claims = 0% expected").
+
+Step 6 — Engineering Patch Format (Offshore-Safe)
+For each change, provide:
+
+Field	Old Mapping	New Mapping	Root Cause	Assumptions	QC Tests	Expected Results
+ch_drg_code	drg_code	CASE WHEN TRIM(raw_drg) RLIKE '^[0-9]{4}$' THEN TRIM(raw_drg) ELSE '' END	Format validation; 15% invalid in raw	Blanks acceptable if invalid	[query name]	0 invalid format violations
+Step 7 — Post-Refresh Gates + CCV Alignment
+After refresh, run QC gates again and update Change Log status:
+
+sql
+-- Post-refresh gate: DRG format
+SELECT 
+  SUM(CASE WHEN ch_drg_code <> '' 
+            AND NOT (ch_drg_code RLIKE '^[0-9]{4}$') THEN 1 ELSE 0 END) AS drg_format_fail
+FROM gdf_claims_refreshed;
+-- Expected: 0 (if fix applied)
+
+Copy
+NEW: Update Change Log status to "Completed by NILE" + run post-implementation review.
+
+5) Core Hive-Safe Guards (Copy/Paste Library)
+5.1 Numeric Guard (IDs / Cents Strings)
+sql
+CASE WHEN TRIM(col) RLIKE '^-?[0-9]+$' 
+  THEN TRIM(col) 
+  ELSE '' 
+END
+
+Copy
+5.2 Amount to Cents String (GDF Pattern)
+sql
+CAST(
+  CAST(
+    NVL(CAST(amount AS DECIMAL(18,2)), 0) * 100 
+    AS BIGINT
+  ) 
+  AS STRING
+)
+
+Copy
+5.3 Identifier Guard (SSN – Non-PHI Safe)
+sql
+CASE
+  WHEN TRIM(ssn) RLIKE '^[0-9]{9}$'
+   AND SUBSTR(TRIM(ssn), 1, 3) NOT IN ('000', '666')
+   AND SUBSTR(TRIM(ssn), 1, 1) <> '9'
+  THEN TRIM(ssn)
+  ELSE ''
+END
+
+Copy
+5.4 Dates: yyyyMMdd + Sentinel Blanking
+sql
+CASE
+  WHEN src_dt IS NOT NULL
+   AND TRIM(src_dt) <> ''
+   AND TRIM(src_dt) NOT IN ('00000000', '1753-01-01 00:00:00', '1900-01-01 00:00:00')
+  THEN FROM_UNIXTIME(UNIX_TIMESTAMP(src_dt, 'yyyy-MM-dd HH:mm:ss'), 'yyyyMMdd')
+  ELSE ''
+END
+
+Copy
+5.5 "Pick One Child Row" (Prevent Row Explosion)
+sql
+ROW_NUMBER() OVER (
+  PARTITION BY key_cols 
+  ORDER BY term_dt DESC, eff_dt DESC, fileloaddate DESC
+) AS rn
+
+Copy
+5.6 Prefer [0-9] Over \d in Hive Regex
+In Hive strings, \d is easy to mis-escape. Prefer:
+
+sql
+-- GOOD: [0-9] in Hive strings
+RLIKE '^[0-9]{2}$'
+
+-- BAD: \d in Hive strings (easy to mis-escape)
+RLIKE '^\d{2}$'
+
+-- ACCEPTABLE: Escaped \d (double backslash)
+RLIKE '^\\d{2}$'
+
+Copy
+5.7 Sentinel / Placeholder Handling (Don't Treat "Non-Empty" as "Real")
+Some sources use sentinel values to represent "missing" (e.g., 1753-01-01 00:00:00 for dates, 00000000 for numeric dates).
+
+sql
+-- Sentinel gate (dates/timestamps)
+SELECT
+  COUNT(*) AS row_cnt,
+  SUM(CASE WHEN dt_col IS NULL THEN 1 ELSE 0 END) AS null_cnt,
+  SUM(CASE WHEN TRIM(CAST(dt_col AS STRING)) = '' THEN 1 ELSE 0 END) AS blank_cnt,
+  SUM(CASE WHEN TRIM(CAST(dt_col AS STRING)) IN ('1753-01-01 00:00:00', '1900-01-01 00:00:00', '00000000') THEN 1 ELSE 0 END) AS sentinel_cnt,
+  SUM(CASE WHEN dt_col IS NOT NULL
+            AND TRIM(CAST(dt_col AS STRING)) <> ''
+            AND TRIM(CAST(dt_col AS STRING)) NOT IN ('1753-01-01 00:00:00', '1900-01-01 00:00:00', '00000000')
+           THEN 1 ELSE 0 END) AS real_cnt
+FROM <table>;
+
+Copy
+Rule: For "required date" fields, validators may still fail if sentinel is blanked—log as source reality + confirm placeholder policy.
+
+5.8 Population + Format Paired Gate (Mandatory for Critical Fields)
+sql
+SELECT
+  COUNT(*) AS row_cnt,
+  SUM(CASE WHEN col IS NULL THEN 1 ELSE 0 END) AS null_cnt,
+  SUM(CASE WHEN TRIM(CAST(col AS STRING)) = '' THEN 1 ELSE 0 END) AS blank_cnt,
+  SUM(CASE WHEN TRIM(CAST(col AS STRING)) <> ''
+            AND NOT (TRIM(CAST(col AS STRING)) RLIKE '^[0-9]{4}$') THEN 1 ELSE 0 END) AS invalid_format_cnt,
+  SUM(CASE WHEN TRIM(CAST(col AS STRING)) <> ''
+            AND TRIM(CAST(col AS STRING)) RLIKE '^[0-9]{4}$' THEN 1 ELSE 0 END) AS valid_format_cnt
+FROM <table>;
+
+Copy
+Rule: If format_valid = 0 AND populated_cnt > 0, you have a format bug (not a "no source" issue).
+
+6) Date Format Validation (NEW)
+Healthcare data has inconsistent date formats across layers:
+
+GDF: String dates should be yyyyMMdd (8 digits, no hyphens)
+CDF: Native TIMESTAMP types (display as yyyy-MM-dd HH:mm:ss when cast)
+Common failures: Excel numeric serial dates (e.g., 43290, 3265)
+6.1 Date Format Validation Template
+sql
+-- Check string date format (GDF layer)
+SELECT 
+  COUNT(*) AS total_rows,
+  SUM(CASE WHEN date_field IS NOT NULL AND date_field <> '' THEN 1 ELSE 0 END) AS populated,
+  SUM(CASE WHEN date_field RLIKE '^[0-9]{8}$' THEN 1 ELSE 0 END) AS yyyyMMdd_format,
+  SUM(CASE WHEN date_field RLIKE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN 1 ELSE 0 END) AS yyyy_mm_dd_format,
+  SUM(CASE WHEN date_field RLIKE '^[0-9]{1,5}$' THEN 1 ELSE 0 END) AS numeric_serial_dates,
+  MAX(LENGTH(date_field)) AS max_length
+FROM <table>;
+
+Copy
+Rules:
+
+If yyyyMMdd_format = populated, dates are correct ✅
+If numeric_serial_dates > 0, Excel conversion bug (trace to source extract) ❌
+If yyyy_mm_dd_format > 0, formatting error (should be no hyphens in GDF strings) ❌
+6.2 Admission Date Population + Format Gates (NEW)
+Admission dates are claim-type specific and often have format issues:
+
+sql
+-- Admission date by claim type (population + format)
+SELECT 
+  claim_type,
+  COUNT(*) AS total_claims,
+  SUM(CASE WHEN admission_date IS NULL OR TRIM(admission_date) = '' THEN 1 ELSE 0 END) AS blank_cnt,
+  SUM(CASE WHEN admission_date IS NOT NULL 
+            AND TRIM(admission_date) <> ''
+            AND TRIM(admission_date) RLIKE '^[0-9]{8}$' THEN 1 ELSE 0 END) AS valid_yyyyMMdd,
+  SUM(CASE WHEN admission_date IS NOT NULL 
+            AND TRIM(admission_date) <> ''
+            AND NOT (TRIM(admission_date) RLIKE '^[0-9]{8}$') THEN 1 ELSE 0 END) AS invalid_format_cnt,
+  ROUND(100.0 * SUM(CASE WHEN admission_date IS NOT NULL AND TRIM(admission_date) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_populated
+FROM gdf_claims
+GROUP BY claim_type
+ORDER BY total_claims DESC;
+
+Copy
+Expected patterns:
+
+Inpatient (I): ~100% populated, 100% valid yyyyMMdd
+Outpatient (O): Sparse (varies by source)
+Professional (P): ~0% populated
+7) Row-Safety Toolkit
+7.1 Dedup + Join Safety Checklist
+sql
+-- Before/after row count validation
+WITH before_dedup AS (
+  SELECT COUNT(*) AS cnt FROM raw_table
+),
+after_dedup AS (
+  SELECT COUNT(*) AS cnt FROM (
+    SELECT * FROM raw_table
+    WHERE rn = 1  -- After dedup
+  ) x
+),
+after_join AS (
+  SELECT COUNT(*) AS cnt FROM (
+    SELECT c.* FROM raw_dedup c
+    LEFT JOIN ref r ON c.key = r.key AND r.rn = 1
+  ) x
+)
+SELECT 
+  b.cnt AS raw_count,
+  ad.cnt AS after_dedup,
+  aj.cnt AS after_join,
+  CASE 
+    WHEN ad.cnt = b.cnt THEN 'DEDUP_OK'
+    ELSE 'DEDUP_LOSS: ' || (b.cnt - ad.cnt)
+  END AS dedup_status,
+  CASE 
+    WHEN aj.cnt = ad.cnt THEN 'JOIN_OK'
+    ELSE 'JOIN_FANOUT: ' || (aj.cnt - ad.cnt)
+  END AS join_status
+FROM before_dedup b, after_dedup ad, after_join aj;
+
+Copy
+7.2 Key Exists But Attribute Missing (Coverage vs Wiring)
+When a field is NULL in output, prove which case it is:
+
+sql
+-- Case A: upstream/lookup truly has no value (coverage gap)
+-- Case B: upstream has value but output is NULL (join/projection gap)
+
+WITH ref AS (
+  SELECT key,
+    MAX(CASE WHEN val IS NOT NULL AND TRIM(CAST(val AS STRING)) <> '' THEN 1 ELSE 0 END) AS ref_has_val
+  FROM ref_table
+  GROUP BY key
+),
+out AS (
+  SELECT key, val AS out_val
+  FROM out_table
+)
+SELECT
+  COUNT(*) AS out_keys,
+  SUM(CASE WHEN r.ref_has_val = 1 THEN 1 ELSE 0 END) AS ref_can_supply,
+  SUM(CASE WHEN (o.out_val IS NULL OR TRIM(CAST(o.out_val AS STRING)) = '') THEN 1 ELSE 0 END) AS out_blank,
+  SUM(CASE WHEN r.ref_has_val = 1 AND (o.out_val IS NULL OR TRIM(CAST(o.out_val AS STRING)) = '') THEN 1 ELSE 0 END) AS wiring_gap_cnt,
+  ROUND(100.0 * SUM(CASE WHEN r.ref_has_val = 1 AND (o.out_val IS NULL OR TRIM(CAST(o.out_val AS STRING)) = '') THEN 1 ELSE 0 END) / COUNT(*), 2) AS wiring_gap_pct
+FROM out o
+LEFT JOIN ref r ON o.key = r.key;
+
+Copy
+Interpretation:
+
+If wiring_gap_pct = 0, the field is blank because source is blank (coverage gap) ✅
+If wiring_gap_pct > 0, the field is blank even though source has data (join/projection gap) ❌
+7.3 Reserved-Word Alias Avoidance
+Avoid aliases like rows, rows_cnt, count. Use row_cnt, cnt, etc. (prevents Hive parse errors).
+
+8) Field Length Validation (NEW)
+Some validators enforce strict max lengths (e.g., 32 chars for text fields, 5 chars for modifiers).
+
+8.1 Field Length Validation Template
+sql
+SELECT 
+  COUNT(*) AS total_rows,
+  SUM(CASE WHEN LENGTH(text_field) > <max_length> THEN 1 ELSE 0 END) AS exceeds_max,
+  MAX(LENGTH(text_field)) AS max_observed_length,
+  ROUND(100.0 * SUM(CASE WHEN LENGTH(text_field) > <max_length> THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_exceeds
+FROM <table>
+WHERE text_field IS NOT NULL;
+
+Copy
+8.2 Common Max Lengths
+Field	Max Length	Notes
+HCPCS modifiers	5 characters	Alphanumeric
+Claim note text	32 characters	May need truncation
+ZIP code	5 digits	ZIP+4 = 9 digits
+ICD-10 code	7 characters	Format: XXX.XX or XXXXX
+NPI	10 digits	No hyphens
+Provider name	60 characters	Varies by validator
+9) Code Type / Metadata Value Set Validation (NEW)
+Some code type fields have restricted value sets (e.g., DRG types must be "MS-DRG" or "AP-DRG", not "APR-DRG").
+
+9.1 Value Set Distribution Check
+sql
+-- Check for unexpected values
+SELECT 
+  code_type_field,
+  COUNT(*) AS occurrence_count,
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 2) AS pct_of_total
+FROM <table>
+WHERE code_type_field IS NOT NULL 
+  AND code_type_field <> ''
+GROUP BY code_type_field
+ORDER BY occurrence_count DESC;
+
+Copy
+9.2 Invalid Value Set Detection
+sql
+SELECT 
+  SUM(CASE WHEN code_type_field NOT IN ('MS-DRG', 'AP-DRG', 'APR-DRG') 
+            THEN 1 ELSE 0 END) AS invalid_values
+FROM <table>
+WHERE code_type_field IS NOT NULL AND code_type_field <> '';
+
+Copy
+9.3 Common Restricted Fields
+Field	Allowed Values	Notes
+drg_type	MS-DRG, AP-DRG, APR-DRG	Check client spec
+claim_type	I, O, P	Inpatient, Outpatient, Professional
+admission_type	1-9	Single digit
+discharge_status	01-99	Two digits
+claim_status	A, R, P, D	Approved, Rejected, Pending, Denied
+10) HCPCS Modifier Array Validation (NEW)
+Modifiers are often stored in arrays. Check population and length.
+
+10.1 Modifier Validation Template
+sql
+-- Summary of modifier population
+WITH exploded_mods AS (
+  SELECT 
+    claim_key,
+    d.line_number AS line_num,
+    d.line_cpt_hcpcs_code AS hcpcs_code,
+    mod_element AS modifier
+  FROM <cdf_table> c
+  LATERAL VIEW explode(c.claim_detail) cd AS d
+  LATERAL VIEW explode(d.line_cpt_hcpcs_modifier) m AS mod_element
+  WHERE mod_element IS NOT NULL AND TRIM(mod_element) <> ''
+)
+SELECT 
+  COUNT(*) AS total_modifiers,
+  SUM(CASE WHEN LENGTH(modifier) > 5 THEN 1 ELSE 0 END) AS exceeds_5_chars,
+  MAX(LENGTH(modifier)) AS max_length,
+  COUNT(DISTINCT claim_key) AS distinct_claims_with_mods
+FROM exploded_mods;
+
+Copy
+Rule: If exceeds_5_chars > 0, modifiers are being truncated or incorrectly populated.
+
+11) Applicability Validation (Field Required Only for Specific Types) (NEW)
+Some fields are only required for specific claim types (e.g., discharge status only for Inpatient claims).
+
+11.1 Applicability Gate by Claim Type
+sql
+-- Validate field population by claim type
+SELECT 
+  claim_type,
+  COUNT(*) AS total_claims,
+  SUM(CASE WHEN field IS NULL OR TRIM(field) = '' THEN 1 ELSE 0 END) AS blank_cnt,
+  SUM(CASE WHEN field IS NOT NULL AND TRIM(field) <> '' THEN 1 ELSE 0 END) AS populated_cnt,
+  ROUND(100.0 * SUM(CASE WHEN field IS NOT NULL AND TRIM(field) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_populated
+FROM <table>
+GROUP BY claim_type
+ORDER BY total_claims DESC;
+
+Copy
+11.2 Expected Applicability Patterns
+Field	Inpatient (I)	Outpatient (O)	Professional (P)
+Discharge status	~100%	Sparse	~0%
+Type of bill	~100%	~100%	~0%
+Admission date	~100%	Sparse	~0%
+Admission type	~100%	Sparse	~0%
+DRG code	~100%	~0%	~0%
+12) Ratio Null Analysis (Safe Division Validation) (NEW)
+Ratios often have nulls when denominators are zero. Validate that nulls are only due to zero/null denominators (safe division), not missing numerators.
+
+12.1 Ratio Null Analysis Template
+sql
+SELECT 
+  COUNT(*) AS total_rows,
+  -- Ratio nulls
+  SUM(CASE WHEN ratio_field IS NULL THEN 1 ELSE 0 END) AS ratio_null,
+  -- Denominator nulls/zeros
+  SUM(CASE WHEN denominator_field IS NULL OR denominator_field = 0 THEN 1 ELSE 0 END) AS denom_null_or_zero,
+  -- Mismatch (ratio null but denominator present) = BAD
+  SUM(CASE WHEN ratio_field IS NULL 
+            AND denominator_field IS NOT NULL 
+            AND denominator_field <> 0 
+           THEN 1 ELSE 0 END) AS null_but_denom_present
+FROM <table>;
+
+Copy
+Rule: If null_but_denom_present = 0, ratio nulls are safe-division noise ✅. If > 0, numerator may be missing ❌.
+
+13) Derived-Field Validation (Inputs Present But Output NULL)
+Derived fields often look "bad" (NULL-heavy) even when raw inputs exist.
+
+13.1 Derived-Field Gating
+sql
+SELECT
+  COUNT(*) AS row_cnt,
+  SUM(CASE WHEN derived_col IS NULL THEN 1 ELSE 0 END) AS derived_null,
+  SUM(CASE WHEN derived_col IS NULL AND input_col_1 IS NOT NULL THEN 1 ELSE 0 END) AS null_but_input1_present,
+  SUM(CASE WHEN derived_col IS NULL AND input_col_2 IS NOT NULL THEN 1 ELSE 0 END) AS null_but_input2_present,
+  ROUND(100.0 * SUM(CASE WHEN derived_col IS NULL AND (input_col_1 IS NOT NULL OR input_col_2 IS NOT NULL) THEN 1 ELSE 0 END) / COUNT(*), 2) AS derivation_gap_pct
+FROM <table>;
+
+Copy
+Rule: If derivation_gap_pct ≈ derived_null, it's a derivation not applied (not raw missing).
+
+14) Hive Runtime Gotchas & Mitigation
+14.1 Type Mismatch (Parquet Mixed Types)
+Some Parquet tables contain mixed physical types across partitions/files (e.g., timestamp column written as text in some files). QC queries that CAST/STRING/TRIM these fields can crash Tez.
+
+Rule:
+
+For TIMESTAMP/DATE columns, prefer NULL checks over TRIM(CAST(... AS STRING)) unless you have confirmed stable typing
+If format validation is required, do it in the string layer (GDF string dates or downstream export tables), not on mixed-typed TIMESTAMP columns
+sql
+-- Safe TIMESTAMP null gate
+SELECT
+  COUNT(*) AS row_cnt,
+  SUM(CASE WHEN ts_col IS NULL THEN 1 ELSE 0 END) AS ts_null
+FROM <table>;
+
+Copy
+14.2 Calcite Scalar Subquery Limitation
+In some Hive environments, scalar subqueries in SELECT are blocked:
+
+plaintext
+error: "SubQuery expressions are only allowed as Where and Having clause predicates"
+
+Copy
+Workaround: Materialize counts as CTEs and CROSS JOIN:
+
+sql
+WITH a AS (...),
+b AS (...),
+ca AS (SELECT COUNT(*) AS a_cnt FROM a),
+cb AS (SELECT COUNT(*) AS b_cnt FROM b)
+SELECT *
+FROM ca
+CROSS JOIN cb;
+
+Copy
+14.3 Impala Function / Schema Limitations
+Impala may treat SIZE() as default.size and deny permissions
+Impala can fail reading Parquet if Hive table schema and Parquet physical schema drift (e.g., INT vs int64)
+Strategy: Do array-heavy work in Hive; use Impala for simple aggregates when Hive is unstable
+14.4 HTML-Escaped Operators
+When pasting from Docs/Slack, operators may be HTML-escaped. Retype them:
+
+&lt; → <
+&gt; → >
+&lt;&gt; → <>
+14.5 Spacing & Formatting
+Always ensure whitespace/newline before FROM/JOIN in Hue
+No spaces for blanks: always use '', never ' ' (spaces cause QC misreads)
+Avoid alias names like rows (reserved word)
+15) End-to-End Spotcheck Trace (NEW)
+When Ops/Spotcheck/Decipher says "blank" and you need practical proof with minimal effort:
+
+15.1 Procedure: Pick an In-Scope ID
+If their examples aren't found, pick any one claim from RAW (limit 1) and use that as the trace ID.
+
+15.2 RAW → GDF → CDF Trace
+sql
+-- RAW (detail-level example fields)
+SELECT 
+  h.claimnumber,
+  d.claimtransactionno,
+  d.procedure_code,
+  d.service_from_date,
+  d.service_to_date
+FROM raw_claim_header h
+JOIN raw_claim_detail d
+  ON h.claimnumber = d.claimnumber
+WHERE h.claimnumber = '<example_id>'
+LIMIT 50;
+
+-- GDF (line-level mapped fields)
+SELECT 
+  ch_client_claim_unique_id,
+  cd_claim_line_number,
+  cd_procedure_code,
+  cd_service_from_date,
+  cd_service_to_date
+FROM gdf_claims
+WHERE ch_client_claim_unique_id = '<example_id>'
+LIMIT 50;
+
+-- CDF (array/line-level mapped fields)
+WITH exploded AS (
+  SELECT 
+    c.claim_key,
+    d AS detail
+  FROM cdf_claims c
+  LATERAL VIEW explode(c.claim_detail) e AS d
+  WHERE c.claim_key = '<example_id>'
+)
+SELECT
+  claim_key,
+  detail.line_number,
+  detail.procedure_code,
+  detail.service_from_date,
+  detail.service_to_date
+FROM exploded
+ORDER BY detail.line_number
+LIMIT 100;
+
+Copy
+Why this helps: It prevents false conclusions caused by (a) wrong grain, (b) wrong field name, or (c) different dataset.
+
+16) Data Loss Investigation Protocol
+16.1 Trigger When
+Raw → GDF retention < 95% (or unexpected drop)
+Apparent "data loss" can actually be wrong-universe comparisons
+16.2 Required Stage Counts (Engineering Must Provide)
+Raw claim-line dedup count
+Post-join counts (after member join, provider join, lookup join)
+Post-filter counts (WHERE clause)
+Final insert count
+16.3 Analyst-Side Non-PHI Debugging Pattern
+sql
+-- Compare raw keys to GDF keys once PKs are correct
+WITH raw_dedup AS (
+  SELECT DISTINCT TRIM(claimnumber) AS claim_key
+  FROM raw_claims
+  WHERE rn = 1  -- After dedup
+),
+gdf_keys AS (
+  SELECT DISTINCT ch_client_claim_unique_id AS claim_key
+  FROM gdf_claims
+)
+SELECT
+  COUNT(*) AS raw_distinct_keys,
+  SUM(CASE WHEN g.claim_key IS NOT NULL THEN 1 ELSE 0 END) AS matched_to_gdf,
+  SUM(CASE WHEN g.claim_key IS NULL THEN 1 ELSE 0 END) AS missing_in_gdf,
+  ROUND(100.0 * SUM(CASE WHEN g.claim_key IS NULL THEN 1 ELSE 0 END) / COUNT(*), 2) AS loss_pct
+FROM raw_dedup r
+LEFT JOIN gdf_keys g ON r.claim_key = g.claim_key;
+
+Copy
+If keys missing, identify whether missing is concentrated by:
+
+Claim type
+Pay date range
+Claim status indicator
+Platform / fileloaddate
+16.4 Source Universe Detection Gate (NEW)
+Before any retention % claim, compute overlap of GDF keys against all available raw loads and pick the best-match baseline:
+
+sql
+-- Multi-universe overlap (if applicable)
+WITH c_main AS (
+  SELECT DISTINCT TRIM(claimnumber) AS claimnumber
+  FROM raw_claims_main_20240302_1
+),
+c_public AS (
+  SELECT DISTINCT TRIM(CLAIM_NUMBER) AS claimnumber
+  FROM raw_claims_public_20240513_1
+),
+gdf AS (
+  SELECT DISTINCT ch_client_claim_unique_id AS claimnumber
+  FROM gdf_claims
+)
+SELECT 
+  'main_to_gdf' AS comparison,
+  SUM(CASE WHEN g.claimnumber IS NOT NULL THEN 1 ELSE 0 END) AS matched,
+  COUNT(*) AS raw_total
+FROM c_main m
+LEFT JOIN gdf g ON m.claimnumber = g.claimnumber
+UNION ALL
+SELECT 
+  'public_to_gdf' AS comparison,
+  SUM(CASE WHEN g.claimnumber IS NOT NULL THEN 1 ELSE 0 END) AS matched,
+  COUNT(*) AS raw_total
+FROM c_public p
+LEFT JOIN gdf g ON p.claimnumber = g.claimnumber;
+
+Copy
+Rule: If one universe has 0% overlap and the other has 95%+, use the high-overlap universe as the baseline.
+
+17) Production QC Pack (Must-Run Post-Refresh)
+17.1 Claims (Medical) – DRG / TOB / Admission Date
+sql
+SELECT
+  SUM(CASE WHEN CH_SUBMITTED_DRG_CODE <> '' 
+            AND NOT (CH_SUBMITTED_DRG_CODE RLIKE '^[0-9]{4}$') THEN 1 ELSE 0 END) AS submitted_drg_fail,
+  SUM(CASE WHEN CH_ALLOWED_DRG_CODE <> '' 
+            AND NOT (CH_ALLOWED_DRG_CODE RLIKE '^[0-9]{4}$') THEN 1 ELSE 0 END) AS allowed_drg_fail,
+  SUM(CASE WHEN CH_TYPE_OF_BILL_CODE <> '' 
+            AND NOT (CH_TYPE_OF_BILL_CODE RLIKE '^[0-9]{4}$') THEN 1 ELSE 0 END) AS tob_4digit_fail,
+  SUM(CASE WHEN CH_ADMISSION_DATE <> '' 
+            AND NOT (CH_ADMISSION_DATE RLIKE '^[0-9]{8}$') THEN 1 ELSE 0 END) AS admission_date_format_fail
+FROM gdf_claims;
+
+Copy
+Expected: All = 0
+
+17.2 Member – SSN / Address
+sql
+SELECT
+  SUM(CASE WHEN CM_MEMBER_SSN <> '' 
+            AND NOT (CM_MEMBER_SSN RLIKE '^[0-9]{9}$') THEN 1 ELSE 0 END) AS ssn_format_fail,
+  SUM(CASE WHEN CM_MEMBER_ADDRESS_PRIMARY_INDICATOR <> 'Y' 
+            AND CM_MEMBER_ADDRESS_PRIMARY_INDICATOR <> '' THEN 1 ELSE 0 END) AS primary_addr_flag_fail
+FROM gdf_member;
+
+Copy
+Expected: All = 0
+
+17.3 Provider – Address Enrichment (Coverage vs Wiring)
+sql
+WITH gdf_addr AS (
+  SELECT
+    c.ch_rendering_provider_client_id AS provider_id,
+    MAX(CASE WHEN rpa.cp_provider_address_01 IS NOT NULL 
+             AND TRIM(rpa.cp_provider_address_01) <> '' THEN 1 ELSE 0 END) AS has_addr1
+  FROM gdf_claims c
+  LEFT JOIN gdf_provider_address rpa
+    ON c.ch_rendering_provider_client_id = rpa.cp_provider_client_id
+   AND rpa.cp_provider_address_primary_indicator = 'Y'
+  GROUP BY c.ch_rendering_provider_client_id
+),
+cdf_check AS (
+  SELECT DISTINCT rendering_provider_id
+  FROM cdf_claims
+)
+SELECT
+  COUNT(*) AS cdf_provider_keys,
+  SUM(CASE WHEN g.has_addr1 = 1 THEN 1 ELSE 0 END) AS gdf_can_supply_addr1
+FROM cdf_check c
+LEFT JOIN gdf_addr g
+  ON c.rendering_provider_id = g.provider_id;
+
+Copy
+Expected: gdf_can_supply_addr1 ≈ cdf_provider_keys (>99%)
+
+17.4 CDF – Quick "Is Enrichment Wired" Checks
+sql
+SELECT
+  SUM(CASE WHEN rendering_provider_address_01 IS NULL THEN 1 ELSE 0 END) AS rend_addr1_null,
+  SUM(CASE WHEN rendering_provider_city IS NULL THEN 1 ELSE 0 END) AS rend_city_null,
+  SUM(CASE WHEN patient_first_name IS NULL OR TRIM(patient_first_name) = '' THEN 1 ELSE 0 END) AS patient_first_blank,
+  SUM(CASE WHEN patient_last_name IS NULL OR TRIM(patient_last_name) = '' THEN 1 ELSE 0 END) AS patient_last_blank
+FROM cdf_claims;
+
+Copy
+Expected: All << 1% of row count
+
+18) Change Log Discipline (GDF Change Management Aligned)
+For each change, always capture:
+
+Field	Value
+Field Name	e.g., ch_drg_code
+Old Mapping	e.g., raw_drg_code
+New Mapping	Exact Hive SQL expression
+Root Cause	QC rule, validator, join/grain issue
+Layer Attribution	Raw→GDF mapping / GDF→CDF mirror / Waiver / No-source
+Assumptions	e.g., "Blanks acceptable if invalid"; "Placeholder 00000000 acceptable"
+QC Tests	Exact query name/file that proves success
+Expected Results	Numeric targets (e.g., "0 format violations")
+CCV Sign-Off Status	(From Change Log) Draft / Pending CCV Review / Requested – CCV Approved / In Progress by NILE / Completed by NILE
+18.1 Engineering-Friendly Patch Notes Format
+2–4 sentences stating:
+
+What was broken (NULL block, strict regex fail, missing join)
+What is being changed (join + COALESCE/placeholder logic)
+How to validate success (QC query + expected result)
+Example:
+
+Field: ch_drg_code
+Problem: DRG codes in raw are 3–5 digits; GDF was not enforcing 4-digit format, causing validator failures.
+Fix: Apply format guard: CASE WHEN TRIM(raw_drg) RLIKE '^[0-9]{4}$' THEN TRIM(raw_drg) ELSE '' END. This will blank invalid codes.
+Validation: Run QC query SELECT SUM(CASE WHEN ch_drg_code <> '' AND NOT (ch_drg_code RLIKE '^[0-9]{4}$') THEN 1 ELSE 0 END) FROM gdf_claims; Expected result: 0.
+
+19) Lessons Learned (Keep Handy)
+Format-only QC is not enough. Always run population + format paired gates. A field can be "format-valid" while 100% blank.
+
+If CDF is NULL but GDF join can supply data, the problem is CDF join/projection wiring, not data availability.
+
+Spotcheck/Decipher disagreements often come from grain or dataset mismatch. Run the Locator Gate + 1-claim end-to-end trace before changing mappings.
+
+Semantic drift recurs. Track placeholder vs real ratios month-over-month. If ratios shift, a mapping change has occurred—document it.
+
+Un-deduped reference tables cause row explosions. Always dedup before join; enforce rn = 1 in the ON clause.
+
+Validators are often strict and cannot be changed. When validators require non-blank fields, placeholders may be required; document clearly.
+
+Product disputes recur. Always back decisions with raw-level proofs (e.g., "0 numeric candidates means 'no source'").
+
+CDF vs downstream layer confusion is common. Always validate your layer first with measurable proof before accepting responsibility for downstream transformation bugs. Provide sample end-to-end traces proving data flows correctly.
+
+Universe gating prevents false "data loss" alarms. Before comparing retention %, compute overlap of GDF keys against available raw loads and pick the best-match baseline.
+
+Deterministic ranking prevents non-deterministic results. Never use ORDER BY NULL in window functions. Always order by real columns (fileloaddate DESC, rowid DESC).
+
+LPAD join hygiene prevents key mismatches. Ensure BOTH sides of joins use identical key normalization (e.g., both LPAD to 9 digits).
+
+Regex escaping in Hive strings is error-prone. Prefer [0-9] over \d. If you must use \d, use \\d (double backslash).
+
+20) Production Readiness Report Template
+When your validation is complete and you need to document "our layer is clean":
+
+Section 1: Executive Summary
+✅ Layer validated: [Raw / GDF / CDF]
+✅ Partition/date: [ingestion_date or fileloaddate]
+✅ Total validations performed: [number]
+✅ Critical failures: [0 or list]
+✅ Documented gaps: [list with % impact and non-blocking justification]
+✅ Production readiness: [Ready / Not Ready]
+Section 2: Validation Results Table
+Validation	Expected	Actual	Status	Evidence Query
+Product code populated	100%	100%	✅	[query file]
+DRG format valid	0 violations	0	✅	[query file]
+Admission date format	0 violations	0	✅	[query file]
+Provider address enrichment	>99%	99.8%	✅	[query file]
+...	...	...	...	...
+Section 3: Known/Acceptable Gaps
+Gap	Impact	Justification	Blocking?
+Billing addr null	0.57% (33K/5.8M)	Subset lacking primary address in source	No
+Discharge status sparse for Outpatient	12%	Not required for O claim type	No
+Section 4: Downstream Issue Documentation
+If downstream teams report issues NOT present in your layer:
+
+Document each issue with validation query showing 0 violations
+Provide sample end-to-end trace proving data flows correctly
+State explicitly: "Issue not present in [your layer name]; downstream transformation issue"
+Attach evidence query output
+Appendix A: Reusable CTE Blocks (Copy/Paste Library)
+A.1 Claims Dedup (Raw)
+sql
+WITH claims_dedup AS (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY TRIM(claimnumber), TRIM(claimtransactionno)
+      ORDER BY fileloaddate DESC, rowid DESC
+    ) rn
+  FROM raw_claims
+)
+SELECT * FROM claims_dedup WHERE rn = 1;
+
+Copy
+A.2 Member Dedup (Raw)
+sql
+WITH member_dedup AS (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY mem_id, depnum
+      ORDER BY end_datec DESC, eff_datec DESC, fileloaddate DESC, rowid DESC
+    ) rn
+  FROM raw_member
+)
+SELECT * FROM member_dedup WHERE rn = 1;
+
+Copy
+A.3 Provider Dedup (Raw)
+sql
+WITH provider_dedup AS (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY providerid
+      ORDER BY fileloaddate DESC, rowid DESC
+    ) rn
+  FROM raw_provider
+)
+SELECT * FROM provider_dedup WHERE rn = 1;
+
+Copy
+A.4 Provider Address Selection (Safe Dedup)
+sql
+WITH provider_addr_dedup AS (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY providerid
+      ORDER BY 
+        CASE WHEN primary_indicator = 'Y' THEN 0 ELSE 1 END,
+        fileloaddate DESC,
+        rowid DESC
+    ) rn
+  FROM raw_provider_address
+)
+SELECT * FROM provider_addr_dedup WHERE rn = 1;
+
+Copy
+A.5 Population + Format Paired Check (Template)
+sql
+WITH validation AS (
+  SELECT
+    COUNT(*) AS row_cnt,
+    SUM(CASE WHEN col IS NULL THEN 1 ELSE 0 END) AS null_cnt,
+    SUM(CASE WHEN TRIM(CAST(col AS STRING)) = '' THEN 1 ELSE 0 END) AS blank_cnt,
+    SUM(CASE WHEN TRIM(CAST(col AS STRING)) <> ''
+              AND NOT (TRIM(CAST(col AS STRING)) RLIKE '^[0-9]{4}$') THEN 1 ELSE 0 END) AS invalid_format_cnt,
+    SUM(CASE WHEN TRIM(CAST(col AS STRING)) <> ''
+              AND TRIM(CAST(col AS STRING)) RLIKE '^[0-9]{4}$' THEN 1 ELSE 0 END) AS valid_format_cnt
+  FROM <table>
+)
+SELECT
+  row_cnt,
+  null_cnt,
+  blank_cnt,
+  invalid_format_cnt,
+  valid_format_cnt,
+  ROUND(100.0 * (null_cnt + blank_cnt) / row_cnt, 2) AS pct_blank,
+  ROUND(100.0 * valid_format_cnt / row_cnt, 2) AS pct_valid,
+  CASE 
+    WHEN invalid_format_cnt = 0 THEN 'PASS'
+    WHEN invalid_format_cnt > 0 AND valid_format_cnt = 0 THEN 'FAIL: 100% invalid'
+    ELSE 'PARTIAL: ' || invalid_format_cnt || ' invalid'
+  END AS status
+FROM validation;
+
+Copy
+Appendix B: Impact Ledger Template
+When you log a work unit, capture at least:
+
+Date: [YYYY-MM-DD]
+Work Unit: [e.g., "DRG code format validation + fix"]
+Tables/Partition: [e.g., "gdf_claims / ingestion_date=20260212"]
+Grain + Key: [e.g., "claim line / ch_client_claim_unique_id + cd_claim_line_number"]
+
+Metrics Captured:
+
+Metric	Before	After	Evidence
+DRG format violations	847,392 (14.6%)	0	[query_20260212.sql]
+Admission date format violations	123,456 (2.1%)	0	[query_20260212.sql]
+Time Saved (Estimate): Baseline 4 hrs → New 1 hr; reuse 3 times/quarter; total 9 hrs/quarter
+Risk Reduction: High (prevents downstream validator failures)
+Next Steps / Owner: [Name/Team]
+
+Appendix C: GDF Change Management Integration (SOP Aligned)
+C.1 Change Log Fields (Required)
+Status (dropdown): Draft / Pending CCV Review / Requested – CCV Approved / In Progress by NILE / Completed by NILE / Approved / Completed
+CCV Sign-Off (CCV clients only): Reviewer Name + Date
+Field Name, Old Mapping, New Mapping, Root Cause, QC Tests, Expected Results (see Section 18)
+C.2 CCV Client List (As of 2026-02-12)
+UHC Cosmos, Aetna HRP, Aetna MCD, Aetna TRAD, UHC CSP, UHC UNET FI, UHC UNET ASO, UHC Cirrus, Wellcare, Harvard Pilgrim, Elevance-Amerigroup, Elevance-Wellpoint
+
+C.3 Workflow for CCV Clients
+Log change in Change Log (Status = Draft / In Progress)
+Move to Pending CCV Review when ready
+CCV Team reviews and provides explicit approval (Status = Requested – CCV Approved) OR requests changes
+NILE picks up only when Status = Requested or Requested – CCV Approved
+NILE updates to In Progress by NILE, then Completed by NILE
+Data Solutions verifies post-refresh and updates to Approved / Completed
+Appendix D: Common Failure Signatures (Quick Reference)
+Signature	Root Cause	Fix Pattern
+100% blank, raw populated	Mapping omission or wrong source column	Add/correct mapping expression
+100% blank, raw also blank	No source; decide placeholder policy	Document as "no source"; apply placeholder if validator requires
+Format failures (e.g., 3-digit DRG)	Format guard missing	Apply CASE/RLIKE guard; blank invalid
+Row count explosion	Un-deduped join	Enforce rn = 1 in ON clause
+Partial nulls (e.g., 15%)	Join key mismatch or missing dependent	Normalize keys; check LPAD consistency
+Semantic drift (placeholder ratio shifts)	Mapping changed	Document in Change Log; update QC gate
+Downstream team blames upstream	Check if issue exists in your layer first	Run end-to-end trace; provide evidence
+Spotcheck says blank but Hive shows populated	Wrong partition/dataset	Run Locator Gate; verify environment
+Array field violations (modifiers, etc.)	Explode syntax or array structure	Check LATERAL VIEW syntax; validate array element types
+Admission date missing for Inpatient	Mapping omission or join gap	Check GDF→CDF join; verify GDF has data
+Quick Start: "I Have 30 Minutes"
+Run Section 0.0 (Dataset Sanity Check) – Confirm you're looking at the right data
+Run Section 0.1 (Locator Gate) – If example IDs return 0, stop and clarify environment
+Run Section 3.2 (Row-Safety Check) – Detect fan-out before investigating fields
+Run Section 5.8 (Population + Format Paired Gate) – Identify whether issue is blank or format
+Run Section 7.2 (Coverage vs Wiring) – Separate "source missing" from "join broken"
+Document findings in Change Log – Include root cause, QC query, expected result
+If CCV client, move to "Pending CCV Review" – Wait for explicit approval before NILE pickup
+
+Version: 2.2
+Last Updated: 2026-02-12
+Maintained By: Justin Waterfield
+Status: Production-Ready
+
+
