@@ -1,0 +1,114 @@
+🔗 Joins Best Practices & Pitfalls
+A reference guide to safe, compliant, and efficient joins in healthcare data pipelines. Prevent row explosion, data loss, and mapping errors by following these patterns and checklists.
+
+1. Why Joins Matter
+Joins are central to healthcare data processing and enrichment.
+Poor join hygiene can lead to row explosion (fan-out), row loss, or duplicate business keys.
+Join errors can produce compliance risks, inaccurate reporting, and downstream system failures.
+
+2. Join Types & When to Use Them
+Join Type	Description	When to Use
+LEFT JOIN	Keeps all rows from the left table	Enrichment/reference data
+INNER JOIN	Only matching rows from both tables	Required fields on both sides
+FULL OUTER JOIN	All rows from both tables, matched where possible	Reconciliation, completeness checks
+ANTI JOIN	Rows in left not in right	Data gap analysis
+
+3. Safe Join Patterns
+A. Baseline Row Count
+Always check and record your fact table’s row count before any joins:
+
+sql
+SELECT COUNT(*) AS fact_rows FROM FACT_TABLE;
+
+Copy
+B. Incremental Joins
+Add one join at a time. After each join, check the row count:
+
+sql
+SELECT COUNT(*) FROM (
+  SELECT *
+  FROM FACT_TABLE f
+  LEFT JOIN LOOKUP_A a ON f.key = a.key
+) joined_data;
+
+Copy
+C. Deduplicate Lookup Tables
+Before joining, deduplicate reference/lookup tables using ROW_NUMBER():
+
+sql
+WITH dedup_lookup AS (
+  SELECT *, ROW_NUMBER() OVER (
+    PARTITION BY key
+    ORDER BY COALESCE(as_of_date, '2999-12-31') DESC, fileloaddate DESC
+  ) AS rn
+  FROM LOOKUP_A
+)
+SELECT *
+FROM FACT_TABLE f
+LEFT JOIN dedup_lookup a ON f.key = a.key AND a.rn = 1;
+
+Copy
+D. Composite Keys
+If uniqueness requires multiple fields, use all of them in your JOIN and PARTITION BY.
+
+4. Detecting and Fixing Row Explosion
+If row count increases after a join, the lookup is not unique on the join key(s).
+Use this to find duplicates in the lookup:
+sql
+SELECT key, COUNT(*) AS dup_cnt
+FROM LOOKUP_A
+GROUP BY key
+HAVING COUNT(*) > 1
+LIMIT 20;
+
+Copy
+Apply deduplication before joining.
+
+5. Join QA Checklist
+Baseline row count recorded before joins
+Row counts checked after every join
+Lookup tables deduplicated before joining
+Composite keys used when needed
+Post-join: no unexpected row count jump
+No duplicate business keys in output
+Sample spot-check for missing or mismapped data
+
+6. Common Join Pitfalls
+Pitfall	Description	Solution
+One-to-many (fan-out)	Lookup is not unique on join key	Deduplicate lookup before joining
+Hidden composite keys	Uniqueness requires more than one join field	Use all key fields in JOIN/DEDUP
+Effective-dated joins	Multiple overlapping date ranges per key	Use correct date logic, dedup by latest active
+Multiple large lookups	Joining several “wide” tables at once	Join incrementally, QA after each
+Cartesian products	Missing or incomplete join conditions	Always specify full join predicate
+
+7. Example: Stepwise Join Process
+sql
+-- 1. Baseline
+SELECT COUNT(*) FROM claims_fact;
+
+-- 2. Dedup provider lookup
+WITH provider_dedup AS (
+  SELECT *, ROW_NUMBER() OVER (
+    PARTITION BY provider_id
+    ORDER BY fileloaddate DESC
+  ) AS rn
+  FROM provider_lookup
+)
+-- 3. Join step
+SELECT f.*, p.npi
+FROM claims_fact f
+LEFT JOIN provider_dedup p
+  ON f.provider_id = p.provider_id AND p.rn = 1;
+
+Copy
+8. Documentation & Audit
+Always document your join order, baseline and post-join counts, dedup strategies, and any fixes.
+Store this info in your notebook, pipeline README, or ETL documentation.
+
+9. Additional Resources
+Data Validation & QC Guide
+Data Auditing & Traceability
+Mapping Reference & Transformation Library
+For join troubleshooting, consult a data lead or escalate using the standard issue template.
+
+
