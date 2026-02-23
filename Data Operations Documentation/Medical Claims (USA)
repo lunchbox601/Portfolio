@@ -1,0 +1,123 @@
+🏥 Medical Claims Lifecycle Primer & Reference
+A comprehensive overview of the U.S. medical claims process, its data artifacts, and key business and data touchpoints. Designed for onboarding, business context, compliance, and reference.
+
+1. Introduction
+The U.S. healthcare claims system is a multi-stage process involving providers, payers, patients, and regulatory entities. Understanding the medical claim lifecycle is essential for accurate data mapping, analytics, compliance, and process improvement.
+
+2. Key Stakeholders
+Stakeholder	Role/Description
+Patient	Receives healthcare services and initiates claims flow
+Provider	Delivers care; submits claims for reimbursement
+Payer/Insurer	Adjudicates, approves/denies, and pays claims
+Clearinghouse	Facilitates secure claim data transfer
+Government	Regulates (CMS, NIH, FDA); covers public programs
+3. Stages of the Medical Claim Lifecycle
+3.1. 📋 Patient Visit
+Description: Patient receives healthcare services from a provider.
+Artifact: Encounter data, medical records.
+3.2. 📝 Documentation
+Description: Provider documents diagnoses, procedures, and services.
+Artifact: Encounter notes, coding (ICD, CPT/HCPCS).
+3.3. 💻 Claim Submission
+Description: Provider/billing system generates an electronic claim (EDI 837 format).
+Artifact: Raw claims file with patient, provider, service, and charge details.
+3.4. 🔍 Claim Processing
+Description: Payer/clearinghouse validates claim for format, completeness, and eligibility.
+Artifact: Claim status file (EDI 277), validation logs.
+3.5. 📧 Claim Adjudication
+Description: Payer applies coverage rules, negotiates rates, identifies duplicates, and decides approval/denial.
+Artifact: Adjudication output (allowed/denied codes, payment reason codes).
+3.6. 💸 Payment
+Description: Payer reimburses provider for approved claims.
+Artifact: Remittance advice (EDI 835), payment record.
+3.7. 📊 Patient Billing
+Description: Provider bills patient for non-covered amounts (co-pay, deductible, coinsurance).
+Artifact: Patient statement, balance bill.
+3.8. 🏦 Reconciliation & Audit
+Description: Provider reconciles received payments vs. submitted claims; audits for gaps, denials, or errors.
+Artifact: Payment reconciliation report, audit trails.
+4. Data Artifacts by Stage
+Stage	Data Table/Source	Key Fields
+Documentation	EMR / encounter tables	patient_id, provider_id, service_date, diagnosis_code, procedure_code
+Claim Submission	Raw claims (header/detail)	claim_id, patient_id, provider_id, charge_amount, service dates
+Processing	Claims status log	claim_id, validation_status, error_code
+Adjudication	Adjudication files/tables	claim_id, allowed_amount, denial_reason
+Payment	Payment/remittance tables	claim_id, payment_amount, payment_date
+Patient Billing	Billing tables	claim_id, patient_id, balance_due
+Reconciliation	Reconciliation reports	claim_id, paid_amount, expected_amount
+5. Common Data Elements
+Patient Info: Name, DOB, gender, insurance ID
+Provider Info: NPI, name, taxonomy, location
+Service Info: Dates, place of service, rendering/billing provider
+Diagnosis Codes: ICD-10 (up to 25 per claim)
+Procedure Codes: CPT/HCPCS (up to 25 per claim)
+Claim Financials: Total charge, allowed, paid, copay, deductible, coinsurance, discount
+Status/Reason Codes: Adjudication and payment outcomes
+Identifiers: Claim number, line number, batch ID
+6. Claims Data Structures
+Header: Claim-level (overall) fields (e.g., claim_id, patient_id, total_charge)
+Detail/Line: Line-level fields (e.g., procedure_code, charge_amount, units)
+Multi-valued Fields: Repeated fields (diagnoses, procedures, modifiers)
+Linkage: claim_id ties header and detail tables
+7. Claims Processing Challenges
+Data Quality: Inconsistent coding, missing/incorrect fields
+Timeliness: Delays in submission or adjudication
+Compliance: Regulatory requirements (HIPAA, CMS)
+Fraud & Abuse: Detection of duplicate, upcoded, or phantom claims
+Denials: Managing and appealing denied claims
+8. Mapping & Transformation Reference
+Raw → GDF → CDF:
+Raw: Direct from source files (often as submitted by provider)
+GDF: Normalized, deduplicated, and typecast; field mapping, scaling, date formatting
+CDF: Client-specific schema; mapped from GDF, may include custom business logic
+Common Transformations:
+Date standardization (yyyyMMdd)
+Amounts in cents (no decimals)
+Boolean conversion (Y/N → TRUE/FALSE)
+Multi-valued fields mapped to arrays or indexed columns
+9. Example Claim Flow (with Data Artifacts)
+Patient Visit:
+EMR Table: encounter_id, patient_id, provider_id
+Claim Submission:
+Raw Claims Header: claim_id, total_charge
+Raw Claims Detail: claim_id, line_number, procedure_code
+Processing/Adjudication:
+Adjudication Table: claim_id, allowed_amount, denial_reason
+Payment:
+Remittance Table: claim_id, paid_amount
+Billing/Reconciliation:
+Patient Statement: claim_id, balance_due
+Reconciliation Report: claim_id, expected_vs_paid
+10. External References & Resources
+CMS (Centers for Medicare & Medicaid Services)
+HIPAA Transaction Standards
+AMA CPT Codebook
+HCFA-1500 Claim Form Reference
+11. Best Practices & Recommendations
+Document every data mapping and transformation step.
+Validate and QA at every lifecycle stage.
+Maintain audit trails for all changes and reconciliations.
+Use only non-PHI data in documentation, queries, and examples.
+Stay current on regulatory and payer requirements.
+12. Visual References
+(Add process diagrams, flowcharts, or swim lanes here as needed for your organization. Example placeholders below.)
+
+plaintext
+[Patient Visit] → [Documentation] → [Claim Submission] → [Processing] → [Adjudication] → [Payment] → [Patient Billing] → [Reconciliation]
+
+Copy
+13. Glossary
+Term	Definition
+Adjudication	The process by which a payer reviews and decides on a claim’s payment status.
+Allowed Amount	The maximum payment a plan will allow for a covered service.
+Capitation	Payment arrangement where providers are paid a set amount per patient per period.
+Coinsurance	The percentage of costs of a covered health care service paid by the patient.
+CPT Code	Current Procedural Terminology; standard for medical procedures.
+Denial	A claim or service not approved for payment by the payer.
+EDI	Electronic Data Interchange; file format standard for claims submission.
+NPI	National Provider Identifier.
+Remittance Advice	Explanation of payments made by a payer to a provider.
+...	...
+For questions, further reading, or to suggest updates, contact your data governance or compliance lead.
+
+
