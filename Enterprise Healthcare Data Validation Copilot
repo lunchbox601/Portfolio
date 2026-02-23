@@ -3,6 +3,7 @@ v2.2 – Vendor-Agnostic, PHI-Safe, Production-Ready
 Last updated: 2026-02-12
 Audience: Data analysts, QA engineers, offshore development teams
 Design: Non-PHI proofs • stable joins • measurable impact • GDF Change Management aligned
+Author: Justin Waterfield
 
 0) Pre-Flight Checklist (Run Every Session)
 0.0 Dataset Sanity Check
@@ -52,11 +53,12 @@ We repeatedly encounter:
 
 Validation failures that are actually wrong-dataset/partition mismatches
 Format-only QC that reports "green" while fields are 100% blank
-Spotcheck disagreements caused by grain or layer confusion
+Downstream team disagreements caused by grain or layer confusion
 Downstream teams blaming upstream layers for issues introduced in their own transformations
 Semantic drift in field mappings over time (e.g., "patient_ssn" sometimes populated, sometimes placeholder)
 Join fan-out from un-deduped reference tables causing row explosions
-CCV sign-off gaps causing rework after development begins
+Clinical team sign-off gaps causing rework after development begins
+
 This guide captures:
 
 Repeatable validation cadence (Raw → GDF → CDF)
@@ -65,19 +67,20 @@ Row-safe join discipline
 GDF Change Management alignment (CCV sign-off gates)
 Semantic drift detection and gates
 Production readiness documentation
+
 2) Environment & Tables (Authoritative)
 2.1 Where We Run
-Cluster: Hive/Hue on [NILE / Tufts / UHC_CSP cluster]
-Schema: dev_niledataingestion_restricted
+Cluster: Hive/Hue on cluster
+Schema: 
 SQL: Hive-compatible (avoid Spark-only features)
 Formatting: Always ensure whitespace/newline before FROM/JOIN in Hue
 2.2 Table Discovery
 sql
 -- Find all tables matching a pattern
-SHOW TABLES IN dev_niledataingestion_restricted LIKE 'uhc_csp_%member%';
+SHOW TABLES IN 
 
 -- Describe a table (columns + types)
-DESCRIBE dev_niledataingestion_restricted.uhc_csp_gdf_member_20241204_1;
+DESCRIBE 
 
 -- Check partitions present
 SELECT ingestion_date, COUNT(*) AS row_count
@@ -230,7 +233,7 @@ Step 0 — Capture Context
 GDF table name + load date/partition
 Validation rule IDs failing + counts/%
 Identify if failures are 100% (unmapped) or partial (join/coverage)
-NEW: Confirm CCV sign-off status in Change Log
+NEW: Confirm clinical team sign-off status in Change Log
 Step 0b — Universe Selection (If Multi-Universe Source)
 Before debugging or "data loss" claims:
 
@@ -852,11 +855,11 @@ sql
 -- Multi-universe overlap (if applicable)
 WITH c_main AS (
   SELECT DISTINCT TRIM(claimnumber) AS claimnumber
-  FROM raw_claims_main_20240302_1
+  FROM 
 ),
 c_public AS (
   SELECT DISTINCT TRIM(CLAIM_NUMBER) AS claimnumber
-  FROM raw_claims_public_20240513_1
+  FROM 
 ),
 gdf AS (
   SELECT DISTINCT ch_client_claim_unique_id AS claimnumber
@@ -959,7 +962,7 @@ Layer Attribution	Raw→GDF mapping / GDF→CDF mirror / Waiver / No-source
 Assumptions	e.g., "Blanks acceptable if invalid"; "Placeholder 00000000 acceptable"
 QC Tests	Exact query name/file that proves success
 Expected Results	Numeric targets (e.g., "0 format violations")
-CCV Sign-Off Status	(From Change Log) Draft / Pending CCV Review / Requested – CCV Approved / In Progress by NILE / Completed by NILE
+ Sign-Off Status	(From Change Log) Draft / Pending  Review / Requested –  Approved / In Progress  / Completed by 
 18.1 Engineering-Friendly Patch Notes Format
 2–4 sentences stating:
 
@@ -1008,6 +1011,7 @@ Section 1: Executive Summary
 ✅ Critical failures: [0 or list]
 ✅ Documented gaps: [list with % impact and non-blocking justification]
 ✅ Production readiness: [Ready / Not Ready]
+
 Section 2: Validation Results Table
 Validation	Expected	Actual	Status	Evidence Query
 Product code populated	100%	100%	✅	[query file]
@@ -1128,22 +1132,7 @@ Time Saved (Estimate): Baseline 4 hrs → New 1 hr; reuse 3 times/quarter; total
 Risk Reduction: High (prevents downstream validator failures)
 Next Steps / Owner: [Name/Team]
 
-Appendix C: GDF Change Management Integration (SOP Aligned)
-C.1 Change Log Fields (Required)
-Status (dropdown): Draft / Pending CCV Review / Requested – CCV Approved / In Progress by NILE / Completed by NILE / Approved / Completed
-CCV Sign-Off (CCV clients only): Reviewer Name + Date
-Field Name, Old Mapping, New Mapping, Root Cause, QC Tests, Expected Results (see Section 18)
-C.2 CCV Client List (As of 2026-02-12)
-UHC Cosmos, Aetna HRP, Aetna MCD, Aetna TRAD, UHC CSP, UHC UNET FI, UHC UNET ASO, UHC Cirrus, Wellcare, Harvard Pilgrim, Elevance-Amerigroup, Elevance-Wellpoint
-
-C.3 Workflow for CCV Clients
-Log change in Change Log (Status = Draft / In Progress)
-Move to Pending CCV Review when ready
-CCV Team reviews and provides explicit approval (Status = Requested – CCV Approved) OR requests changes
-NILE picks up only when Status = Requested or Requested – CCV Approved
-NILE updates to In Progress by NILE, then Completed by NILE
-Data Solutions verifies post-refresh and updates to Approved / Completed
-Appendix D: Common Failure Signatures (Quick Reference)
+Common Failure Signatures (Quick Reference)
 Signature	Root Cause	Fix Pattern
 100% blank, raw populated	Mapping omission or wrong source column	Add/correct mapping expression
 100% blank, raw also blank	No source; decide placeholder policy	Document as "no source"; apply placeholder if validator requires
@@ -1155,14 +1144,6 @@ Downstream team blames upstream	Check if issue exists in your layer first	Run en
 Spotcheck says blank but Hive shows populated	Wrong partition/dataset	Run Locator Gate; verify environment
 Array field violations (modifiers, etc.)	Explode syntax or array structure	Check LATERAL VIEW syntax; validate array element types
 Admission date missing for Inpatient	Mapping omission or join gap	Check GDF→CDF join; verify GDF has data
-Quick Start: "I Have 30 Minutes"
-Run Section 0.0 (Dataset Sanity Check) – Confirm you're looking at the right data
-Run Section 0.1 (Locator Gate) – If example IDs return 0, stop and clarify environment
-Run Section 3.2 (Row-Safety Check) – Detect fan-out before investigating fields
-Run Section 5.8 (Population + Format Paired Gate) – Identify whether issue is blank or format
-Run Section 7.2 (Coverage vs Wiring) – Separate "source missing" from "join broken"
-Document findings in Change Log – Include root cause, QC query, expected result
-If CCV client, move to "Pending CCV Review" – Wait for explicit approval before NILE pickup
 
 Version: 2.2
 Last Updated: 2026-02-12
