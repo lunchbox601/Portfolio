@@ -1,0 +1,98 @@
+📊 Exploratory Data Analysis (EDA) Playbook
+A practical reference for profiling, understanding, and documenting the contents and quality of healthcare data sets. Designed for onboarding, data quality improvement, and audit readiness.
+
+1. Why EDA Matters
+Uncovers the true structure, content, and quirks of each dataset.
+Identifies data quality issues and mapping opportunities early.
+Informs transformation, validation, and mapping logic.
+Supports defensible decision-making and compliance.
+
+2. EDA Workflow Checklist
+Step	Purpose	Example Output
+Schema & Metadata Review	Understand columns, types, and expectations	Column dictionary, field notes
+Population Checks	Measure non-null/blank, null, and blank rates	Table of population %, null %, blank %
+Value Distribution	Find distinct values, common codes, outliers	Frequency tables, histograms
+Range & Format Profiling	Check min/max, regex, and outlier boundaries	Numeric stats, format pass rates
+Uniqueness & Duplication	Detect duplicate or multi-valued keys	PK uniqueness %, duplicate count
+Cross-Field Consistency	Validate key business rules and relationships	Cross-tab tables, rule violation list
+Missing Data Analysis	Quantify and document missingness	Missingness table by field
+Anomaly & Outlier Detection	Spot unexpected patterns	Outlier lists, summary notes
+
+3. Example EDA SQL Patterns
+A. Schema Review
+sql
+DESCRIBE ;
+
+Copy
+B. Population/Null/Blank Check
+sql
+SELECT
+  COUNT(*) AS total_rows,
+  SUM(CASE WHEN field IS NULL THEN 1 ELSE 0 END) AS nulls,
+  SUM(CASE WHEN TRIM(CAST(field AS STRING)) = '' THEN 1 ELSE 0 END) AS blanks,
+  SUM(CASE WHEN field IS NOT NULL AND TRIM(CAST(field AS STRING)) <> '' THEN 1 ELSE 0 END) AS populated,
+  ROUND(100.0 * SUM(CASE WHEN field IS NOT NULL AND TRIM(CAST(field AS STRING)) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_populated
+FROM <table></table>;
+
+Copy
+C. Value Frequency
+sql
+SELECT field, COUNT(*) AS freq
+FROM <table></table>
+GROUP BY field
+ORDER BY freq DESC
+LIMIT 20;
+
+Copy
+D. Numeric Range & Outlier
+sql
+SELECT
+  MIN(field) AS min_val,
+  MAX(field) AS max_val,
+  AVG(field) AS avg_val,
+  PERCENTILE(field, 0.01) AS p1,
+  PERCENTILE(field, 0.99) AS p99
+FROM <table></table>
+WHERE field IS NOT NULL;
+
+Copy
+E. Format/Regex Check
+sql
+SELECT
+  SUM(CASE WHEN field RLIKE '^[0-9]{8}$' THEN 1 ELSE 0 END) AS yyyymmdd_ok,
+  SUM(CASE WHEN field LIKE '%-%' THEN 1 ELSE 0 END) AS has_dash
+FROM <table></table>;
+
+Copy
+F. Duplicate Key Check
+sql
+SELECT pk_col, COUNT(*) AS cnt
+FROM <table></table>
+GROUP BY pk_col
+HAVING COUNT(*) > 1
+ORDER BY cnt DESC
+LIMIT 20;
+
+Copy
+4. EDA Reporting Template
+Field Name	Data Type	Populated %	Null %	Distinct Values	Common Values	Min	Max	Format Pass %	Notes
+patient_id	STRING	100	0	1,000,000	...	...	...	100	PK, 9-digit
+claim_date	STRING	99.8	0.2	365	...	...	...	99.7	yyyyMMdd
+...	...	...	...	...	...	...	...	...	...
+5. Documenting EDA Findings
+Record all key findings, anomalies, and recommendations in your EDA summary.
+Flag fields needing special mapping, transformation, or validation.
+Store EDA summaries in project repo or Confluence for future reference.
+6. Integrating EDA into Data Onboarding
+Complete EDA before mapping or validation work begins.
+Use EDA findings to inform mapping tables, validation gates, and change logs.
+Reference EDA documentation in onboarding and audit materials.
+7. Additional Resources
+Data Validation & QC Guide
+Mapping Reference & Transformation Library
+Audit & Traceability Guide
+For EDA support or to contribute new patterns, contact the data quality lead or join #data-ops-support.
+
+---<table></table>
+
+
