@@ -1,0 +1,72 @@
+🚀 Onboarding & Quick-Start Guide
+Welcome to the Healthcare Data Operations Team! This guide will help you get up-to-speed with our data pipelines, tools, and documentation standards as efficiently as possible.
+
+1. Environment Setup
+A. Access Checklist
+
+Request access to all required environments (e.g., Hive/HUE, Nile, Airflow, etc.)
+Obtain credentials for shared drives, Git repositories, and collaboration tools (Slack, Jira, Confluence)
+Confirm VPN and remote access as needed
+
+B. Key Tools & Platforms
+
+Hive/HUE: Data exploration, validation, and QC
+Airflow: Orchestration of ETL pipelines
+Git: Version control for SQL, documentation, and code
+Jira: Ticketing and change management
+Slack: Team communication (#data-ops-support recommended)
+
+2. Documentation Map
+Document/Resource	Purpose	Link
+Documentation Home (README)	Main index and navigation	README.md
+Validation & QC Guide	Data validation gates and best practices	validation-qc.md
+Mapping Reference	Field mappings, transformation logic	mapping-reference.md
+Joins Best Practices	Join patterns, deduplication, troubleshooting	joins-best-practices.md
+EDA Playbook	Exploratory Data Analysis workflows	eda-playbook.md
+Change Management SOP	Ticketing, change tracking, and escalation process	change-management.md
+
+3. Getting Started
+A. First Steps
+
+Review the Documentation Home to get an overview of all resources.
+Clone or fork the relevant repositories from Git.
+Set up your development environment (e.g., SQL clients, IDEs).
+Schedule a 1:1 onboarding session with your mentor or team lead.
+B. Key Contacts
+
+Data Ops Lead: [name] ([email])
+Data Validation Contact: [name] ([email])
+ETL/Engineering Contact: [name] ([email])
+Slack Channel: #data-ops-support
+
+4. Core Workflows
+A. Data Validation
+Use the Validation & QC Guide for standard gates and sample queries.
+Report any anomalies using Jira and the issue escalation template.
+B. Mapping & Transformation
+Always reference the Mapping Reference before starting any new mapping.
+Document any new or changed transformations as part of your work.
+C. Joins & Deduplication
+Follow Joins Best Practices to avoid row explosion or data loss.
+Always checkpoint row counts before and after major joins.
+D. Change Management
+Log all changes in the Change Management SOP before moving to production.
+All changes require peer review and sign-off.
+
+5. Support & Troubleshooting
+Slack: #data-ops-support for real-time help
+Jira: For tracking bugs, enhancements, and requests
+Office Hours: Fridays 2pm ET (or as scheduled by the team)
+Escalation: Contact your lead or the data governance team for urgent issues
+
+6. Compliance & Best Practices
+Never handle or export PHI unless explicitly authorized.
+Use only non-PHI, vendor-agnostic examples in documentation and queries.
+Follow coding, naming, and documentation standards as outlined in the README.
+
+7. Feedback & Continuous Improvement
+Please suggest edits or open issues if you find gaps in this guide or any documentation. We continuously improve our documentation and processes based on team feedback.
+
+Welcome aboard! We’re glad to have you on the team.
+
+
