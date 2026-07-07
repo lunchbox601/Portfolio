@@ -1,15 +1,18 @@
 Enterprise Healthcare Data Validation Copilot
+
 v2.2 – Vendor-Agnostic, PHI-Safe, Production-Ready
 Last updated: 2026-02-12
+
 Audience: Data analysts, QA engineers, offshore development teams
 Design: Non-PHI proofs • stable joins • measurable impact • GDF Change Management aligned
+
 Author: Justin Waterfield
 
 0) Pre-Flight Checklist (Run Every Session)
 0.0 Dataset Sanity Check
 Before any validation, confirm you're looking at the right data:
 
-sql
+
 -- 1. Check partition presence
 SELECT ingestion_date, COUNT(*) AS row_count
 FROM <table>
@@ -31,13 +34,13 @@ SELECT
   COUNT(DISTINCT service_from_date) AS distinct_service_dates
 FROM <table>;
 
-Copy
+
 Rule: If row counts or date ranges don't match expectations, STOP and clarify scope before validating fields.
 
 0.1 Locator Gate (Prevent Wrong Dataset/Partition Issues)
 When Spotcheck/Decipher/Ops reports a blank field, prove the record exists in the dataset you're validating:
 
-sql
+
 -- Example IDs existence check (any layer)
 SELECT 
   COUNT(*) AS hit_cnt,
@@ -45,7 +48,7 @@ SELECT
 FROM <table>
 WHERE claim_key IN ('claim_123', 'claim_456', 'claim_789');
 
-Copy
+
 Rule: If hit_cnt = 0, the record is not in this dataset/partition. Verify environment and partition before assuming mapping failure.
 
 1) Why This Exists (What We Learned)
@@ -88,7 +91,7 @@ FROM <table>
 GROUP BY ingestion_date
 ORDER BY ingestion_date DESC;
 
-Copy
+
 3) Golden Rules (Validated, Hard Requirements)
 3.1 Dedup Before Join (Always)
 sql
@@ -125,7 +128,7 @@ WITH provider_dedup AS (
 )
 SELECT * FROM provider_dedup WHERE rn = 1;
 
-Copy
+
 3.2 Row-Safety (Row Count Must Not Change)
 Every LEFT JOIN must be row-invariant unless explicitly creating multi-row outputs.
 
@@ -147,7 +150,7 @@ SELECT
   CASE WHEN b.cnt = a.cnt THEN 'SAFE' ELSE 'FAN-OUT' END AS status
 FROM before_join b, after_join a;
 
-Copy
+
 3.3 Normalize Keys on BOTH Sides
 sql
 -- Provider ID normalization
@@ -165,7 +168,7 @@ REGEXP_REPLACE(TRIM(npi), '[^0-9]', '')
 -- TIN (9 digits, no hyphens)
 REGEXP_REPLACE(TRIM(tin), '[^0-9]', '')
 
-Copy
+
 3.4 Dates (Sentinel + Format Policy)
 Healthcare sources frequently use sentinel values (00000000, 1753-01-01, 99991231) as "unknown/ongoing/invalid."
 
@@ -175,7 +178,7 @@ Always document this as a validator-compatibility decision, not clinical truth
 3.5 Deterministic Ranking (Never ORDER BY NULL)
 Any ROW_NUMBER() must order by real columns:
 
-sql
+
 -- GOOD: Deterministic
 ROW_NUMBER() OVER (
   PARTITION BY key
@@ -188,11 +191,11 @@ ROW_NUMBER() OVER (
   ORDER BY NULL
 )
 
-Copy
+
 3.6 Semantic Drift Gates (NEW: Prevent Mapping Creep)
 Over time, field mappings can drift (e.g., "patient_ssn" sometimes real, sometimes placeholder). Detect this:
 
-sql
+
 -- Semantic drift detection: SSN real vs placeholder ratio over time
 SELECT 
   SUBSTR(ingestion_date, 1, 7) AS month,
@@ -204,13 +207,13 @@ FROM cdf_claims
 GROUP BY SUBSTR(ingestion_date, 1, 7)
 ORDER BY month DESC;
 
-Copy
+
 Rule: If real_pct drops suddenly (e.g., 95% → 5%), a mapping change has occurred. Document the change in the Change Log.
 
 3.7 LPAD Join Hygiene (NEW: Prevent Key Mismatch)
 When joining on zero-padded keys, ensure BOTH sides use identical padding:
 
-sql
+
 -- GOOD: Both sides padded identically
 SELECT c.claim_key, m.member_name
 FROM claims c
@@ -227,7 +230,7 @@ SELECT c.claim_key, m.member_name
 FROM claims c
 LEFT JOIN member m ON c.mem_id = m.mem_id;  -- mem_id is "000123456" vs "123456"
 
-Copy
+
 4) Standard Validation Workflow (7-Step Loop)
 Step 0 — Capture Context
 GDF table name + load date/partition
@@ -240,6 +243,7 @@ Before debugging or "data loss" claims:
 Is the dataset MAIN or PUBLIC or SENIOR?
 Are we mistakenly using PUBLIC member/group tables to enrich MAIN claims?
 Run universe overlap gates (see Section 3.7 in Tufts playbook if applicable)
+
 Step 1 — Triage: Classify Failures by Pattern
 Pattern	Signature	Root Cause
 100% missing / invalid	All rows blank or all fail regex	Unmapped field, wrong source column, wrong value-set constant
@@ -249,10 +253,11 @@ Data loss	Raw row count >> GDF row count	Filters, accidental INNER JOIN, collaps
 CDF structural/grain	"Only 1 row per key expected"	Header duplication, array repetition, grain mismatch
 Example IDs return 0 rows	Locator gate = 0	Wrong partition/table, wrong identifier field, wrong environment
 Semantic drift	Placeholder ratio changes month-over-month	Mapping changed; document in Change Log
+
 Step 2 — Raw Availability Proof (Non-PHI)
 Confirm the raw column exists and measure population:
 
-sql
+
 -- Raw column discovery + population
 DESCRIBE <raw_table>;
 
@@ -264,11 +269,11 @@ SELECT
   ROUND(100.0 * SUM(CASE WHEN col IS NOT NULL AND TRIM(CAST(col AS STRING)) <> '' THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_populated
 FROM <raw_table>;
 
-Copy
+
 Step 3 — GDF Population Proof (Non-PHI)
 Measure blanks/nulls/invalid formats in GDF:
 
-sql
+
 -- GDF population + format paired gate (MANDATORY)
 SELECT
   COUNT(*) AS row_cnt,
@@ -280,13 +285,13 @@ SELECT
             AND TRIM(CAST(col AS STRING)) RLIKE '^[0-9]{4}$' THEN 1 ELSE 0 END) AS valid_format_cnt
 FROM <gdf_table>;
 
-Copy
+
 Rule: Population ≠ validity. Every critical field needs both a population gate AND a format gate.
 
 Step 4 — Simulation Proof (Build SIM View)
 Create a SIM view (or CTE) that computes the mapped field from raw using the proposed logic:
 
-sql
+
 -- SIM view: raw → proposed mapping
 WITH raw_dedup AS (
   SELECT *,
@@ -310,13 +315,13 @@ SELECT
   SUM(CASE WHEN sim_drg_code <> '' THEN 1 ELSE 0 END) AS populated_cnt
 FROM sim;
 
-Copy
+
 Why SIM works: It validates transformations without touching production ETL, isolates mapping bugs from join bugs, and produces non-PHI metrics.
 
 Step 5 — Partial-Coverage Reporting (NEW: Grain + %)
 When a field is not 100% populated, report coverage by grain and document expectations:
 
-sql
+
 -- Partial coverage by claim type
 SELECT 
   claim_type,
@@ -328,7 +333,7 @@ FROM gdf_claims
 GROUP BY claim_type
 ORDER BY total_claims DESC;
 
-Copy
+
 Rule: Document why coverage is partial (e.g., "Discharge status only for Inpatient = 100% expected; Professional claims = 0% expected").
 
 Step 6 — Engineering Patch Format (Offshore-Safe)
@@ -339,7 +344,7 @@ ch_drg_code	drg_code	CASE WHEN TRIM(raw_drg) RLIKE '^[0-9]{4}$' THEN TRIM(raw_dr
 Step 7 — Post-Refresh Gates + CCV Alignment
 After refresh, run QC gates again and update Change Log status:
 
-sql
+
 -- Post-refresh gate: DRG format
 SELECT 
   SUM(CASE WHEN ch_drg_code <> '' 
@@ -347,7 +352,7 @@ SELECT
 FROM gdf_claims_refreshed;
 -- Expected: 0 (if fix applied)
 
-Copy
+
 NEW: Update Change Log status to "Completed by NILE" + run post-implementation review.
 
 5) Core Hive-Safe Guards (Copy/Paste Library)
@@ -358,7 +363,7 @@ CASE WHEN TRIM(col) RLIKE '^-?[0-9]+$'
   ELSE '' 
 END
 
-Copy
+
 5.2 Amount to Cents String (GDF Pattern)
 sql
 CAST(
@@ -369,7 +374,7 @@ CAST(
   AS STRING
 )
 
-Copy
+
 5.3 Identifier Guard (SSN – Non-PHI Safe)
 sql
 CASE
@@ -380,7 +385,7 @@ CASE
   ELSE ''
 END
 
-Copy
+
 5.4 Dates: yyyyMMdd + Sentinel Blanking
 sql
 CASE
@@ -391,7 +396,7 @@ CASE
   ELSE ''
 END
 
-Copy
+
 5.5 "Pick One Child Row" (Prevent Row Explosion)
 sql
 ROW_NUMBER() OVER (
@@ -399,11 +404,11 @@ ROW_NUMBER() OVER (
   ORDER BY term_dt DESC, eff_dt DESC, fileloaddate DESC
 ) AS rn
 
-Copy
+
 5.6 Prefer [0-9] Over \d in Hive Regex
 In Hive strings, \d is easy to mis-escape. Prefer:
 
-sql
+
 -- GOOD: [0-9] in Hive strings
 RLIKE '^[0-9]{2}$'
 
@@ -413,11 +418,11 @@ RLIKE '^\d{2}$'
 -- ACCEPTABLE: Escaped \d (double backslash)
 RLIKE '^\\d{2}$'
 
-Copy
+
 5.7 Sentinel / Placeholder Handling (Don't Treat "Non-Empty" as "Real")
 Some sources use sentinel values to represent "missing" (e.g., 1753-01-01 00:00:00 for dates, 00000000 for numeric dates).
 
-sql
+
 -- Sentinel gate (dates/timestamps)
 SELECT
   COUNT(*) AS row_cnt,
@@ -430,11 +435,11 @@ SELECT
            THEN 1 ELSE 0 END) AS real_cnt
 FROM <table>;
 
-Copy
+
 Rule: For "required date" fields, validators may still fail if sentinel is blanked—log as source reality + confirm placeholder policy.
 
 5.8 Population + Format Paired Gate (Mandatory for Critical Fields)
-sql
+
 SELECT
   COUNT(*) AS row_cnt,
   SUM(CASE WHEN col IS NULL THEN 1 ELSE 0 END) AS null_cnt,
@@ -445,7 +450,7 @@ SELECT
             AND TRIM(CAST(col AS STRING)) RLIKE '^[0-9]{4}$' THEN 1 ELSE 0 END) AS valid_format_cnt
 FROM <table>;
 
-Copy
+
 Rule: If format_valid = 0 AND populated_cnt > 0, you have a format bug (not a "no source" issue).
 
 6) Date Format Validation (NEW)
@@ -454,8 +459,9 @@ Healthcare data has inconsistent date formats across layers:
 GDF: String dates should be yyyyMMdd (8 digits, no hyphens)
 CDF: Native TIMESTAMP types (display as yyyy-MM-dd HH:mm:ss when cast)
 Common failures: Excel numeric serial dates (e.g., 43290, 3265)
+
 6.1 Date Format Validation Template
-sql
+
 -- Check string date format (GDF layer)
 SELECT 
   COUNT(*) AS total_rows,
@@ -466,7 +472,7 @@ SELECT
   MAX(LENGTH(date_field)) AS max_length
 FROM <table>;
 
-Copy
+
 Rules:
 
 If yyyyMMdd_format = populated, dates are correct ✅
@@ -475,7 +481,7 @@ If yyyy_mm_dd_format > 0, formatting error (should be no hyphens in GDF strings)
 6.2 Admission Date Population + Format Gates (NEW)
 Admission dates are claim-type specific and often have format issues:
 
-sql
+
 -- Admission date by claim type (population + format)
 SELECT 
   claim_type,
@@ -492,7 +498,7 @@ FROM gdf_claims
 GROUP BY claim_type
 ORDER BY total_claims DESC;
 
-Copy
+
 Expected patterns:
 
 Inpatient (I): ~100% populated, 100% valid yyyyMMdd
@@ -531,11 +537,11 @@ SELECT
   END AS join_status
 FROM before_dedup b, after_dedup ad, after_join aj;
 
-Copy
+
 7.2 Key Exists But Attribute Missing (Coverage vs Wiring)
 When a field is NULL in output, prove which case it is:
 
-sql
+
 -- Case A: upstream/lookup truly has no value (coverage gap)
 -- Case B: upstream has value but output is NULL (join/projection gap)
 
@@ -558,7 +564,7 @@ SELECT
 FROM out o
 LEFT JOIN ref r ON o.key = r.key;
 
-Copy
+
 Interpretation:
 
 If wiring_gap_pct = 0, the field is blank because source is blank (coverage gap) ✅
@@ -570,7 +576,7 @@ Avoid aliases like rows, rows_cnt, count. Use row_cnt, cnt, etc. (prevents Hive 
 Some validators enforce strict max lengths (e.g., 32 chars for text fields, 5 chars for modifiers).
 
 8.1 Field Length Validation Template
-sql
+
 SELECT 
   COUNT(*) AS total_rows,
   SUM(CASE WHEN LENGTH(text_field) > <max_length> THEN 1 ELSE 0 END) AS exceeds_max,
@@ -579,7 +585,7 @@ SELECT
 FROM <table>
 WHERE text_field IS NOT NULL;
 
-Copy
+
 8.2 Common Max Lengths
 Field	Max Length	Notes
 HCPCS modifiers	5 characters	Alphanumeric
@@ -592,7 +598,7 @@ Provider name	60 characters	Varies by validator
 Some code type fields have restricted value sets (e.g., DRG types must be "MS-DRG" or "AP-DRG", not "APR-DRG").
 
 9.1 Value Set Distribution Check
-sql
+
 -- Check for unexpected values
 SELECT 
   code_type_field,
@@ -604,7 +610,7 @@ WHERE code_type_field IS NOT NULL
 GROUP BY code_type_field
 ORDER BY occurrence_count DESC;
 
-Copy
+
 9.2 Invalid Value Set Detection
 sql
 SELECT 
@@ -613,7 +619,7 @@ SELECT
 FROM <table>
 WHERE code_type_field IS NOT NULL AND code_type_field <> '';
 
-Copy
+
 9.3 Common Restricted Fields
 Field	Allowed Values	Notes
 drg_type	MS-DRG, AP-DRG, APR-DRG	Check client spec
@@ -625,7 +631,7 @@ claim_status	A, R, P, D	Approved, Rejected, Pending, Denied
 Modifiers are often stored in arrays. Check population and length.
 
 10.1 Modifier Validation Template
-sql
+
 -- Summary of modifier population
 WITH exploded_mods AS (
   SELECT 
@@ -645,14 +651,14 @@ SELECT
   COUNT(DISTINCT claim_key) AS distinct_claims_with_mods
 FROM exploded_mods;
 
-Copy
+
 Rule: If exceeds_5_chars > 0, modifiers are being truncated or incorrectly populated.
 
 11) Applicability Validation (Field Required Only for Specific Types) (NEW)
 Some fields are only required for specific claim types (e.g., discharge status only for Inpatient claims).
 
 11.1 Applicability Gate by Claim Type
-sql
+
 -- Validate field population by claim type
 SELECT 
   claim_type,
@@ -664,7 +670,7 @@ FROM <table>
 GROUP BY claim_type
 ORDER BY total_claims DESC;
 
-Copy
+
 11.2 Expected Applicability Patterns
 Field	Inpatient (I)	Outpatient (O)	Professional (P)
 Discharge status	~100%	Sparse	~0%
@@ -676,7 +682,7 @@ DRG code	~100%	~0%	~0%
 Ratios often have nulls when denominators are zero. Validate that nulls are only due to zero/null denominators (safe division), not missing numerators.
 
 12.1 Ratio Null Analysis Template
-sql
+
 SELECT 
   COUNT(*) AS total_rows,
   -- Ratio nulls
@@ -690,14 +696,14 @@ SELECT
            THEN 1 ELSE 0 END) AS null_but_denom_present
 FROM <table>;
 
-Copy
+
 Rule: If null_but_denom_present = 0, ratio nulls are safe-division noise ✅. If > 0, numerator may be missing ❌.
 
 13) Derived-Field Validation (Inputs Present But Output NULL)
 Derived fields often look "bad" (NULL-heavy) even when raw inputs exist.
 
 13.1 Derived-Field Gating
-sql
+
 SELECT
   COUNT(*) AS row_cnt,
   SUM(CASE WHEN derived_col IS NULL THEN 1 ELSE 0 END) AS derived_null,
@@ -706,7 +712,7 @@ SELECT
   ROUND(100.0 * SUM(CASE WHEN derived_col IS NULL AND (input_col_1 IS NOT NULL OR input_col_2 IS NOT NULL) THEN 1 ELSE 0 END) / COUNT(*), 2) AS derivation_gap_pct
 FROM <table>;
 
-Copy
+
 Rule: If derivation_gap_pct ≈ derived_null, it's a derivation not applied (not raw missing).
 
 14) Hive Runtime Gotchas & Mitigation
@@ -724,17 +730,17 @@ SELECT
   SUM(CASE WHEN ts_col IS NULL THEN 1 ELSE 0 END) AS ts_null
 FROM <table>;
 
-Copy
+
 14.2 Calcite Scalar Subquery Limitation
 In some Hive environments, scalar subqueries in SELECT are blocked:
 
-plaintext
+
 error: "SubQuery expressions are only allowed as Where and Having clause predicates"
 
-Copy
+
 Workaround: Materialize counts as CTEs and CROSS JOIN:
 
-sql
+
 WITH a AS (...),
 b AS (...),
 ca AS (SELECT COUNT(*) AS a_cnt FROM a),
@@ -743,17 +749,19 @@ SELECT *
 FROM ca
 CROSS JOIN cb;
 
-Copy
+
 14.3 Impala Function / Schema Limitations
 Impala may treat SIZE() as default.size and deny permissions
 Impala can fail reading Parquet if Hive table schema and Parquet physical schema drift (e.g., INT vs int64)
 Strategy: Do array-heavy work in Hive; use Impala for simple aggregates when Hive is unstable
+
 14.4 HTML-Escaped Operators
 When pasting from Docs/Slack, operators may be HTML-escaped. Retype them:
 
 &lt; → <
 &gt; → >
 &lt;&gt; → <>
+
 14.5 Spacing & Formatting
 Always ensure whitespace/newline before FROM/JOIN in Hue
 No spaces for blanks: always use '', never ' ' (spaces cause QC misreads)
@@ -809,7 +817,7 @@ FROM exploded
 ORDER BY detail.line_number
 LIMIT 100;
 
-Copy
+
 Why this helps: It prevents false conclusions caused by (a) wrong grain, (b) wrong field name, or (c) different dataset.
 
 16) Data Loss Investigation Protocol
@@ -841,7 +849,6 @@ SELECT
 FROM raw_dedup r
 LEFT JOIN gdf_keys g ON r.claim_key = g.claim_key;
 
-Copy
 If keys missing, identify whether missing is concentrated by:
 
 Claim type
@@ -879,7 +886,7 @@ SELECT
 FROM c_public p
 LEFT JOIN gdf g ON p.claimnumber = g.claimnumber;
 
-Copy
+
 Rule: If one universe has 0% overlap and the other has 95%+, use the high-overlap universe as the baseline.
 
 17) Production QC Pack (Must-Run Post-Refresh)
@@ -896,7 +903,7 @@ SELECT
             AND NOT (CH_ADMISSION_DATE RLIKE '^[0-9]{8}$') THEN 1 ELSE 0 END) AS admission_date_format_fail
 FROM gdf_claims;
 
-Copy
+
 Expected: All = 0
 
 17.2 Member – SSN / Address
@@ -908,7 +915,7 @@ SELECT
             AND CM_MEMBER_ADDRESS_PRIMARY_INDICATOR <> '' THEN 1 ELSE 0 END) AS primary_addr_flag_fail
 FROM gdf_member;
 
-Copy
+
 Expected: All = 0
 
 17.3 Provider – Address Enrichment (Coverage vs Wiring)
@@ -935,7 +942,7 @@ FROM cdf_check c
 LEFT JOIN gdf_addr g
   ON c.rendering_provider_id = g.provider_id;
 
-Copy
+
 Expected: gdf_can_supply_addr1 ≈ cdf_provider_keys (>99%)
 
 17.4 CDF – Quick "Is Enrichment Wired" Checks
@@ -947,7 +954,7 @@ SELECT
   SUM(CASE WHEN patient_last_name IS NULL OR TRIM(patient_last_name) = '' THEN 1 ELSE 0 END) AS patient_last_blank
 FROM cdf_claims;
 
-Copy
+
 Expected: All << 1% of row count
 
 18) Change Log Discipline (GDF Change Management Aligned)
@@ -1030,6 +1037,7 @@ Document each issue with validation query showing 0 violations
 Provide sample end-to-end trace proving data flows correctly
 State explicitly: "Issue not present in [your layer name]; downstream transformation issue"
 Attach evidence query output
+
 Appendix A: Reusable CTE Blocks (Copy/Paste Library)
 A.1 Claims Dedup (Raw)
 sql
@@ -1085,7 +1093,7 @@ WITH provider_addr_dedup AS (
 )
 SELECT * FROM provider_addr_dedup WHERE rn = 1;
 
-Copy
+
 A.5 Population + Format Paired Check (Template)
 sql
 WITH validation AS (
@@ -1114,7 +1122,7 @@ SELECT
   END AS status
 FROM validation;
 
-Copy
+
 Appendix B: Impact Ledger Template
 When you log a work unit, capture at least:
 
