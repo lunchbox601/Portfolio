@@ -1,0 +1,86 @@
+#Healthcare Claims Data - A Field Guide
+
+A primer on how healthcare claims data is actually shaped.
+
+---
+
+## The Core Domains
+
+A claims dataset almost always arrives as a set of related domains:
+
+Domain | Grain (one row per) | Role
+
+Claims | claim line (detail) or claim (header) | The financial + clinical event; what was done, billed, allowed, paid
+Member | member x coverage period | Who recieved care (eligibility, demographics, enrollment)
+Provider | provider (location/network) | Who delivered care (NPI, TIN, specialty, network status)
+Group / Plan | employer group or benefit plan | The coverage context (line of business, product)
+COB | member x other coverage | Coordination of Benefits (other payers)
+Pharmacy | Rx claim line | Drug claims
+
+The claims domain is the fact table; the rest are reference/lookup tables you join to it. Almost every row-explosion bug lives in one of these joins.
+
+## Header vs. detail; the grain that trips everyone up
+
+A claim has two natural levels:
+
+Header - one row per claim. Carries claim-level facts and sums of the lines (total billed, total allowed, total paid).
+Detail / line - one row per service line. Carries per-line values (this procedure, revenue code, this line's paid amount).
+
+The pairing rule: most financial fields exist at both levels. A header amount is the SUM of its detail line, repeated on every line at header grain. When you touch a financial field check
+for its partner.
+
+SUM(detail.amount) per claim == header.amount
+
+Two classic defects:
+-header popualted with a single line's value instead of the sum --> understated totals.
+-A field that should be per-line is rpeeated at header grain --> double-counting when re-aggregated downstream.
+
+Grain alos matters across layers. A source/raw layer may be line grain while a consumer model is header grain with the lines nested in an array. You cannot validate a collapsed/aggreaged output directly against
+raw input - different grain. Cmpare like-to-like or validate the output pattern.
+
+## Claim tpe drives everything
+
+Claims split into three types, and this single attribute governs which fields should be populated. 
+
+Type | Meaning | Typical Form
+I - inpatient | Facility, admited | UB-04 / 837I
+O - Outpatient | Facility, not admitted | Ub-04 / 837I
+P - Profesional | Physician / Clinician | CMS-1500 / 837P
+
+Key Insight: a field that is populated across all claim types is usually wrong. Revenue codes are institutional only. 
+DRGs are inpatient only, procedure codes don't belong on inpatient. See primer 02 for the full applicability matrix. When a field's popluation rate looks too low, set the realistic ceiling
+by claim type first before calling it a defect - ie an instutional only conccept will look sparse in a professional heavy population, and that's correct.
+
+## THe Claim lifecycle: versions and adjustments
+
+Claims are not static. A claim is submitted, adjudicated, sometimes reversed, and re-adjusticated. Each pass produceds a version. (an adjustment). The same logical claim can appear many times in a raw feed.
+Downstream analytics almost always wants the final action - the single most-recent, authortative version of each claim, with the interim/duplicate versions removed. Getting this right is foundational
+getting it wrong silently double-counts money. See primer 05.
+
+Common lifecycle fields.
+-claim key /id - uniquer per version
+-root claim id - the verison-independent id (the key with version suffix stripped). All versions of one claim share a root.
+-Version / adjustment number - increpents per readjudication
+-Adjudication date, paid date, received date - used to rank versions
+-Payment status - paid, pending, denied, reversed. usually derived from a raw status-code
+
+## Identififers you'll normalize constantly
+
+Member Id (+ dependent number) : the member key is often not unique without the dependent number. Joining on member alone collapses dependents and explodes enrollment. 
+Provider ID / NPI / TIN - providers frequently have multiple rows per ID, dedup before joining
+Normilization is a two sided conract - if you strip leading zeroes or left pad an ID on one side, do it on both sides.
+
+## Money, units, dates: format conversions
+
+Standadized claims layers usually store
+
+-Amounts as implied decimal integers: never assume a literal decimal string: confirm the fields picture/length agaisnt the layout spec
+-units scaled (often x1000)
+-Dates as YYYYmmDD, with sentienls meaning missing, not a real date
+
+Format compliance is not value correctness. A value can be numerically right and still violate the required format. Validate both.
+
+## Summary
+
+Claims data is a versioned fact table at two grains whos fields are conditoinal on claim type, joined to a historical reference table that must be deduplicated first. Almost every bug is a 
+violation of one of those four truths.
